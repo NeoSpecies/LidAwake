@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-VERSION="1.0.0"
+VERSION="1.0.1"
 BUILD_DIR="$ROOT/build"
 APP="$BUILD_DIR/LidAwake.app"
 
@@ -28,6 +28,13 @@ cp "$BIN/lidawake"       "$APP/Contents/Resources/lidawake"
 cp "$BIN/lidawake-probe" "$APP/Contents/Resources/lidawake-probe"
 cp "$ROOT/scripts/install-helper.sh"   "$APP/Contents/Resources/install-helper.sh"
 cp "$ROOT/scripts/uninstall-helper.sh" "$APP/Contents/Resources/uninstall-helper.sh"
+
+# App 图标：没有就现场生成（只依赖 CLT，见 tools/make-icon.swift）
+if [ ! -f "$ROOT/Resources/AppIcon.icns" ]; then
+    echo "==> 生成 App 图标"
+    swift "$ROOT/tools/make-icon.swift" "$ROOT/Resources" >/dev/null
+fi
+cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 chmod 755 "$APP/Contents/Resources/"*.sh "$APP/Contents/Resources/lidawake"* "$APP/Contents/Resources/lidawaked"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -39,12 +46,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key>       <string>LidAwake</string>
     <key>CFBundleIdentifier</key>        <string>com.cogito.LidAwake</string>
     <key>CFBundleExecutable</key>        <string>LidAwake</string>
+    <key>CFBundleIconFile</key>          <string>AppIcon</string>
     <key>CFBundlePackageType</key>       <string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key>           <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>    <string>15.0</string>
     <key>LSUIElement</key>               <true/>
-    <key>NSHumanReadableCopyright</key>  <string>LidAwake — 合盖续跑</string>
+    <key>LSApplicationCategoryType</key> <string>public.app-category.utilities</string>
+    <key>NSHumanReadableCopyright</key>  <string>LidAwake — 合盖续跑 · MIT License</string>
     <key>NSSupportsAutomaticTermination</key><false/>
     <key>NSSupportsSuddenTermination</key>   <false/>
 </dict>

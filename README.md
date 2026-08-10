@@ -1,12 +1,17 @@
 <div align="center">
 
+<img src="Resources/icon-1024.png" width="128" alt="LidAwake" />
+
 # LidAwake
 
 **合上盖子，让 Mac 继续跑。**
 
+[English](README.en.md) · 简体中文
+
 给需要长时间跑任务的人用的 macOS 原生菜单栏工具 —— AI Agent、编译、训练、下载、同步。
 纯电池也有效，无需外接显示器或键鼠。
 
+[![Release](https://img.shields.io/github/v/release/NeoSpecies/LidAwake?color=blue)](https://github.com/NeoSpecies/LidAwake/releases/latest)
 [![macOS](https://img.shields.io/badge/macOS-15%2B-black?logo=apple)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-6.0-orange?logo=swift)](https://swift.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -76,12 +81,19 @@ lidawake-probe report --expect awake
 
 ## 安装
 
-### 用安装包（推荐）
-
-从 [Releases](https://github.com/NeoSpecies/LidAwake/releases) 下载 `.pkg`，然后：
+### Homebrew（最快）
 
 ```bash
-sudo installer -pkg LidAwake-1.0.0.pkg -target /
+brew tap NeoSpecies/tap
+brew install --cask lidawake
+```
+
+### 用安装包
+
+从 [Releases](https://github.com/NeoSpecies/LidAwake/releases/latest) 下载 `.pkg`，然后：
+
+```bash
+sudo installer -pkg LidAwake-1.0.1.pkg -target /
 ```
 
 > 目前的包**未做代码签名和公证**（作者暂无 Apple Developer ID）。
@@ -283,13 +295,6 @@ LidAwake 解决的是一个很具体、也很烦人的问题：**合盖就断，
 
 **Cogito**（[@NeoSpecies](https://github.com/NeoSpecies)）
 
-- 💻 主力语言 **C++ / Go / Python**
-- 🌱 其他开源项目：
-  - [neo](https://github.com/NeoSpecies/neo) —— Go 高性能微服务 AI 通信框架（含 HTTP / TCP / AI 三个 IPC 服务）
-  - [AgilityMemDB](https://github.com/NeoSpecies/AgilityMemDB) —— Go 高性能内存数据库
-  - [NoraORM](https://github.com/NeoSpecies/NoraORM) —— Python 异步 ORM，项目名来自他女儿的名字
-  - [TNTDockPanel](https://github.com/NeoSpecies/TNTDockPanel) —— Docker 图形化管理面板
-
 **LidAwake 的起源**，用他自己的话说：
 
 > 「Mac 合盖以后就直接断网并停止运行。但在 AI Agent 时代，这个事情非常非常难以接受。」
@@ -297,23 +302,27 @@ LidAwake 解决的是一个很具体、也很烦人的问题：**合盖就断，
 网上的教程要么给的是根本拦不住合盖的 `caffeinate -diu`，要么让你装个受能力边界限制的第三方 App。
 于是他决定自己从 IOKit 层把这件事做对 —— 于是有了这个项目。
 
-### 关注他
+---
 
 <div align="center">
 
-### 顽皮的程序员
+### 👋 关注「顽皮的程序员」
 
-**公众号** · **抖音** · **微信视频号** —— 三个平台同名，搜「顽皮的程序员」
+**微信公众号** · **抖音** · **微信视频号**
+
+三个平台同名，搜 **顽皮的程序员** 就能找到
+
+聊 Mac 效率工具、AI Agent 实战、以及这类"自己动手把问题解决掉"的过程
+
+<br>
+
+[![Website](https://img.shields.io/badge/Website-neospecies.ai-000000?style=for-the-badge&logo=safari&logoColor=white)](https://www.neospecies.ai)
+[![GitHub](https://img.shields.io/badge/GitHub-NeoSpecies-121011?style=for-the-badge&logo=github&logoColor=white)](https://github.com/NeoSpecies)
+[![Email](https://img.shields.io/badge/Email-neospecies@outlook.com-D14836?style=for-the-badge&logo=maildotru&logoColor=white)](mailto:neospecies@outlook.com)
 
 </div>
 
-其他联系方式：
-
-| 平台 | |
-|---|---|
-| 个人网站 | [neospecies.ai](https://www.neospecies.ai) |
-| GitHub | [@NeoSpecies](https://github.com/NeoSpecies) |
-| 邮箱 | neospecies@outlook.com |
+---
 
 ## 参与贡献
 
