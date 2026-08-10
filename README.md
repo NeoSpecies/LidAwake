@@ -255,6 +255,83 @@ CLT 环境下没有 `XCTest` / `swift-testing` 这两个 module，所以 L1 用�
 
 会退出 App、移除登录项、注销服务、**复位 `SleepDisabled`**、删除所有安装的文件。
 
+## Roadmap
+
+接下来最想做的三件事：
+
+1. **`lidawake while -- <命令>`** —— 绑定进程生命周期，命令跑完自动关。
+   不用再猜"这活儿要多久"，也不会忘记关
+2. **合盖续航预估** —— 菜单栏直接显示「按当前功耗还能合盖跑 ≈ 2h10m」，
+   并记录会话历史，让"合盖到底掉多少电"变成你自己机器上的真实数字
+3. **英文 README + i18n + Homebrew Cask + CI** —— 让它更容易被别人用上
+
+完整清单和「明确不做」的部分见 [ROADMAP.md](ROADMAP.md)。
+
+## ⭐ 如果它帮到了你
+
+LidAwake 解决的是一个很具体、也很烦人的问题：**合盖就断，任务白跑**。
+
+如果它帮你救回过一次被打断的任务，点个 Star 是最实在的回报 ——
+它能让下一个在搜「mac 合盖 不断网」的人更快找到这个答案，也让我知道值得继续做下去。
+
+如果你觉得它还差点什么，[开个 Issue](https://github.com/NeoSpecies/LidAwake/issues)。
+上面那份 Roadmap 的排序，很大程度上会由你们的反馈决定。
+
+[![Star History Chart](https://api.star-history.com/svg?repos=NeoSpecies/LidAwake&type=Date)](https://star-history.com/#NeoSpecies/LidAwake&Date)
+
+## 关于作者
+
+**Cogito**（[@NeoSpecies](https://github.com/NeoSpecies)） — 连续创业者，全栈 AIoT & LLM 工程师，10+ 年技术管理与产品交付经验。现在 **Foresee AI+** 做智能空间方向的 AIoT 与大模型落地。坐标加拿大卡尔加里。
+
+- 🧬 背景横跨 **生物学 · 技术 · 创业** 三块，习惯从跨领域的角度找解法
+- 🔌 交付链路从 **定制硬件（PCB 设计、MCU、传感器）一路打到云平台**，AIoT 全栈十余年
+- 🧠 专注 **大模型工程化**（微调、知识注入、对齐）与**边缘端轻量化 AI 部署**
+- 💻 主力语言 **C++ / Go / Python**（也写 Java、PHP、SQL；前端 React / Vue）
+- 🚀 多家技术公司创始人 / CTO，同时在高校担任导师
+- 🌱 活跃在开源：[neo](https://github.com/NeoSpecies/neo)（Go 高性能微服务 AI 通信框架，含 HTTP/TCP/AI 三个 IPC 服务）、
+  [AgilityMemDB](https://github.com/NeoSpecies/AgilityMemDB)（Go 高性能内存数据库）、
+  [NoraORM](https://github.com/NeoSpecies/NoraORM)（Python 异步 ORM，项目名来自他女儿的名字）、
+  [TNTDockPanel](https://github.com/NeoSpecies/TNTDockPanel)（Docker 图形化管理）
+
+**LidAwake 的起源**，用他自己的话说：
+
+> 「Mac 合盖以后就直接断网并停止运行。但在 AI Agent 时代，这个事情非常非常难以接受。」
+
+网上的教程要么给的是根本拦不住合盖的 `caffeinate -diu`，要么让你装个受能力边界限制的第三方 App。
+于是他决定自己从 IOKit 层把这件事做对 —— 于是有了这个项目。
+
+### 关注他
+
+| 平台 | |
+|---|---|
+| 公众号 / 抖音 / 微信视频号 | **顽皮的程序员**（三个平台同名） |
+| 个人网站 | [neospecies.ai](https://www.neospecies.ai) |
+| LinkedIn | [linkedin.com/in/cogito](https://www.linkedin.com/in/cogito/) |
+| GitHub | [@NeoSpecies](https://github.com/NeoSpecies) |
+| 邮箱 | neospecies@outlook.com |
+
+聊 AIoT、边缘 AI、大模型工程化、深科技创业，都欢迎找他。
+
+## 参与贡献
+
+欢迎 PR。几条约定：
+
+```bash
+./scripts/run-tests.sh                 # 必跑（85 项单元测试）
+sudo ./scripts/integration-test.sh     # 改守护进程 / XPC / 决策引擎时必跑
+```
+
+- **改到机制层（断言层或 `SleepDisabled`）的 PR，请附一次合盖 E2E 报告**：
+  `lidawake-probe start` → 合盖 60 秒 → `lidawake-probe report --expect awake`。
+  这是本项目唯一能真正证明"改动没把核心能力弄坏"的手段
+- 决策逻辑请继续放在 `Engine` 里保持纯函数（不读时钟、不读 IOKit、不写文件），
+  并补上对应单测 —— 这是"合盖是否休眠"这种没法在 CI 里复现的逻辑仍然可测的前提
+- **不要**扩大 XPC 协议的表达能力。它现在只能表达 `off` / `indefinite` / `until(秒数)`，
+  没有任何字段能表达路径、命令或 shell 参数。这是本项目最重要的安全属性，
+  别为了功能方便把它拆掉（背景见 [docs/REVIEW.md](docs/REVIEW.md) R2-1）
+- 任何新增的"保持唤醒"能力，都必须同时想清楚它的**失效安全**：进程崩了怎么办、
+  关机怎么办、用户忘了关怎么办
+
 ## License
 
 [MIT](LICENSE)
