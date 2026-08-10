@@ -281,17 +281,14 @@ LidAwake 解决的是一个很具体、也很烦人的问题：**合盖就断，
 
 ## 关于作者
 
-**Cogito**（[@NeoSpecies](https://github.com/NeoSpecies)） — 连续创业者，全栈 AIoT & LLM 工程师，10+ 年技术管理与产品交付经验。现在 **Foresee AI+** 做智能空间方向的 AIoT 与大模型落地。坐标加拿大卡尔加里。
+**Cogito**（[@NeoSpecies](https://github.com/NeoSpecies)）
 
-- 🧬 背景横跨 **生物学 · 技术 · 创业** 三块，习惯从跨领域的角度找解法
-- 🔌 交付链路从 **定制硬件（PCB 设计、MCU、传感器）一路打到云平台**，AIoT 全栈十余年
-- 🧠 专注 **大模型工程化**（微调、知识注入、对齐）与**边缘端轻量化 AI 部署**
-- 💻 主力语言 **C++ / Go / Python**（也写 Java、PHP、SQL；前端 React / Vue）
-- 🚀 多家技术公司创始人 / CTO，同时在高校担任导师
-- 🌱 活跃在开源：[neo](https://github.com/NeoSpecies/neo)（Go 高性能微服务 AI 通信框架，含 HTTP/TCP/AI 三个 IPC 服务）、
-  [AgilityMemDB](https://github.com/NeoSpecies/AgilityMemDB)（Go 高性能内存数据库）、
-  [NoraORM](https://github.com/NeoSpecies/NoraORM)（Python 异步 ORM，项目名来自他女儿的名字）、
-  [TNTDockPanel](https://github.com/NeoSpecies/TNTDockPanel)（Docker 图形化管理）
+- 💻 主力语言 **C++ / Go / Python**
+- 🌱 其他开源项目：
+  - [neo](https://github.com/NeoSpecies/neo) —— Go 高性能微服务 AI 通信框架（含 HTTP / TCP / AI 三个 IPC 服务）
+  - [AgilityMemDB](https://github.com/NeoSpecies/AgilityMemDB) —— Go 高性能内存数据库
+  - [NoraORM](https://github.com/NeoSpecies/NoraORM) —— Python 异步 ORM，项目名来自他女儿的名字
+  - [TNTDockPanel](https://github.com/NeoSpecies/TNTDockPanel) —— Docker 图形化管理面板
 
 **LidAwake 的起源**，用他自己的话说：
 
@@ -302,15 +299,21 @@ LidAwake 解决的是一个很具体、也很烦人的问题：**合盖就断，
 
 ### 关注他
 
+<div align="center">
+
+### 顽皮的程序员
+
+**公众号** · **抖音** · **微信视频号** —— 三个平台同名，搜「顽皮的程序员」
+
+</div>
+
+其他联系方式：
+
 | 平台 | |
 |---|---|
-| 公众号 / 抖音 / 微信视频号 | **顽皮的程序员**（三个平台同名） |
 | 个人网站 | [neospecies.ai](https://www.neospecies.ai) |
-| LinkedIn | [linkedin.com/in/cogito](https://www.linkedin.com/in/cogito/) |
 | GitHub | [@NeoSpecies](https://github.com/NeoSpecies) |
 | 邮箱 | neospecies@outlook.com |
-
-聊 AIoT、边缘 AI、大模型工程化、深科技创业，都欢迎找他。
 
 ## 参与贡献
 
