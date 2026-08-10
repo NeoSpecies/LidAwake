@@ -1,0 +1,19 @@
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# 构建产物（发布走 GitHub Releases，不进仓库）
+build/
+*.pkg
+*.dmg
+*.dSYM/
+
+# macOS
+.DS_Store
+._*
+
+# 编辑器
+.vscode/
+*.xcuserstate
+xcuserdata/
