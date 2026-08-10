@@ -95,6 +95,7 @@ lidawake-probe report --expect awake
 
 ```bash
 brew tap NeoSpecies/tap
+brew trust NeoSpecies/tap        # newer Homebrew requires trusting third-party taps
 brew install --cask lidawake
 ```
 
