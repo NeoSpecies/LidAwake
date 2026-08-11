@@ -15,6 +15,7 @@ final class MenuController: NSObject, NSMenuDelegate {
     private var probeRunning = false
     private var menuIsOpen = false
     private var installing = false
+    private let foldFeature = FoldFeature()
 
     private var daemonInstalled: Bool { DaemonClient.isDaemonInstalled }
     private var isActive: Bool { status?.active ?? limited.mode.isActive }
@@ -50,6 +51,9 @@ final class MenuController: NSObject, NSMenuDelegate {
             }
         }
         limited.onChange = { [weak self] in self?.applyStateToUI() }
+        foldFeature.onStateChange = { [weak self] in
+            DispatchQueue.main.async { self?.applyStateToUI() }
+        }
 
         refresh()
         applyStateToUI()
@@ -63,6 +67,7 @@ final class MenuController: NSObject, NSMenuDelegate {
     }
 
     func shutdown() {
+        foldFeature.shutdown()
         titleTimer?.invalidate()
         limited.shutdown()
         client.invalidate()
@@ -315,6 +320,7 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     private func rebuild(_ menu: NSMenu) {
         menu.removeAllItems()
+        let foldEnabled = foldFeature.isEnabled
 
         // ── 状态区
         switch (isActive, currentMode.deadline) {
@@ -424,6 +430,45 @@ final class MenuController: NSObject, NSMenuDelegate {
         }
         menu.addAction(daemonInstalled ? "修复后台服务…" : "安装后台服务…") {
             [weak self] in self?.installService()
+        }
+        menu.addSubmenu("菜单栏折叠") { sub in
+            sub.addAction(foldEnabled ? "打开面板（\(self.foldFeature.hotKeyName)）" : "打开面板",
+                          state: nil) { [weak self] in self?.foldFeature.openPanel() }
+            if foldEnabled {
+                sub.addAction(self.foldFeature.foldState == .folded ? "展开菜单栏图标" : "折叠菜单栏图标") {
+                    [weak self] in self?.foldFeature.toggleFold()
+                }
+            }
+            sub.addItem(.separator())
+            sub.addAction("启用菜单栏折叠", state: foldEnabled ? .on : .off) { [weak self] in
+                guard let self else { return }
+                let turningOn = !self.foldFeature.isEnabled
+                self.foldFeature.setEnabled(turningOn)
+                if turningOn {
+                    Alerts.show("已启用菜单栏折叠",
+                                "菜单栏里多了两个图标：\n\n"
+                                + "• 「〉」切换按钮 —— 单击折叠/展开，右键打开面板\n"
+                                + "• 「⋮」折叠边界 —— 按住 ⌘ 拖动它，它左边的图标属于被折叠的那一组\n\n"
+                                + "快捷键 \(self.foldFeature.hotKeyName) 可随时唤起面板。")
+                }
+            }
+            sub.addAction("全局快捷键 \(self.foldFeature.hotKeyName)",
+                          state: HotKey.isEnabled ? .on : .off) { [weak self] in
+                self?.foldFeature.setHotKeyEnabled(!HotKey.isEnabled)
+            }
+            sub.addItem(.separator())
+            let axOK = self.foldFeature.accessibilityGranted
+            sub.addDisabled("辅助功能权限: \(axOK ? "已授权" : "未授权")")
+            if !axOK {
+                sub.addAction("授权辅助功能…（列出并点击菜单栏图标）") { [weak self] in
+                    self?.foldFeature.requestAccessibility()
+                }
+            }
+            sub.addAction("真实图标预览（需屏幕录制）",
+                          state: self.foldFeature.realIconEnabled ? .on : .off) { [weak self] in
+                guard let self else { return }
+                self.foldFeature.setRealIconPreview(!self.foldFeature.realIconRequested)
+            }
         }
         menu.addAction("自检（合盖连续性测试）…") { [weak self] in self?.startSelfTest() }
         if probeRunning {

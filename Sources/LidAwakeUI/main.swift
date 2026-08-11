@@ -13,6 +13,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// 菜单栏折叠功能的自检入口（不起 GUI，供脚本与集成测试用）
+if CommandLine.arguments.contains("--selftest-menubar") {
+    MenuBarSelfTest.run()
+    exit(0)
+}
+
 // 同一用户下只保留一个实例，避免菜单栏出现两个图标。
 // 已经有别的实例在跑 → 本次启动直接退出（登录项 + 手动打开都可能触发）。
 let others = NSRunningApplication

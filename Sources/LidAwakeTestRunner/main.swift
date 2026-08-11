@@ -1,5 +1,6 @@
 import Foundation
 import LidAwakeCore
+import CoreGraphics
 
 // CLT 环境下没有 XCTest / swift-testing（已实测），因此用极简 harness。
 // 核心逻辑全部是纯函数，harness 足够。
@@ -291,6 +292,124 @@ Listed by owning process:
 """
 eq(Diagnostics.parseForeignAssertions(own, excluding: LidAwakeInfo.assertionName).count, 0,
    "自己持有的断言不算第三方")
+
+section("系统状态：速率计算（纯函数）")
+
+func snap(_ t: Double, cpuUser: Double = 0, cpuSys: Double = 0, cpuIdle: Double = 0,
+          diskR: UInt64 = 0, diskW: UInt64 = 0, rx: UInt64 = 0, tx: UInt64 = 0) -> StatsSnapshot {
+    StatsSnapshot(cpuUser: cpuUser, cpuSystem: cpuSys, cpuIdle: cpuIdle, cpuNice: 0,
+                  diskRead: diskR, diskWrite: diskW, netRx: rx, netTx: tx, timestamp: t)
+}
+
+do {
+    let a = snap(100, cpuUser: 100, cpuSys: 50, cpuIdle: 850, diskR: 0, diskW: 0, rx: 0, tx: 0)
+    let b = snap(102, cpuUser: 200, cpuSys: 100, cpuIdle: 1700, diskR: 2048, diskW: 4096,
+                 rx: 20480, tx: 10240)
+    let r = StatsRates.between(a, b)
+    check(abs(r.cpuUser - 0.1) < 0.001, "CPU user 100/1000 ticks → 10%")
+    check(abs(r.cpuSystem - 0.05) < 0.001, "CPU system 50/1000 ticks → 5%")
+    check(abs(r.cpuBusy - 0.15) < 0.001, "CPU busy → 15%")
+    eq(r.diskReadPerSec, 1024, "磁盘读 2048B / 2s → 1024B/s")
+    eq(r.diskWritePerSec, 2048, "磁盘写 4096B / 2s → 2048B/s")
+    eq(r.netRxPerSec, 10240, "网络下行 20480B / 2s → 10240B/s")
+    eq(r.netTxPerSec, 5120, "网络上行 10240B / 2s → 5120B/s")
+}
+do {  // 计数器回绕（进程重启 / 网卡重置）绝不能产生负数或天文数字
+    let a = snap(10, diskR: 1_000_000, rx: 999_999)
+    let b = snap(11, diskR: 5, rx: 3)
+    let r = StatsRates.between(a, b)
+    eq(r.diskReadPerSec, 0, "磁盘计数器回绕 → 0（不是负数）")
+    eq(r.netRxPerSec, 0, "网络计数器回绕 → 0")
+}
+do {  // dt 为 0 / 负 / 非有限
+    let a = snap(50, cpuUser: 10, cpuIdle: 90, diskR: 100)
+    eq(StatsRates.between(a, snap(50, diskR: 200)).diskReadPerSec, 0, "dt=0 → 速率 0")
+    eq(StatsRates.between(a, snap(49, diskR: 200)).diskReadPerSec, 0, "dt<0 → 速率 0")
+    let nanSnap = snap(Double.nan, diskR: 200)
+    eq(StatsRates.between(a, nanSnap).diskReadPerSec, 0, "dt=nan → 速率 0")
+}
+do {  // CPU tick 完全没动（机器彻底空闲的极端情况）不能除 0
+    let a = snap(1, cpuUser: 5, cpuIdle: 5)
+    let r = StatsRates.between(a, snap(2, cpuUser: 5, cpuIdle: 5))
+    eq(r.cpuBusy, 0, "CPU tick 无变化 → 0%（不是 nan）")
+}
+eq(MemoryInfo(used: 50, total: 100).fraction, 0.5, "内存占比")
+eq(MemoryInfo(used: 50, total: 0).fraction, 0, "内存总量为 0 → 占比 0（不是 nan）")
+eq(MemoryInfo(used: 200, total: 100).fraction, 1, "内存占比上限收敛到 1")
+eq(DiskInfo(free: 25, total: 100).usedFraction, 0.75, "磁盘已用占比")
+eq(DiskInfo(free: 0, total: 0).usedFraction, 0, "磁盘总量为 0 → 0")
+
+section("字节 / 速率格式化")
+eq(Format.bytes(0), "0 B", "0 字节")
+eq(Format.bytes(512), "512 B", "512 B")
+eq(Format.bytes(2048), "2 KB", "KB 不带小数")
+eq(Format.bytes(5 * 1024 * 1024), "5 MB", "MB 不带小数")
+eq(Format.bytes(3.5 * 1024 * 1024 * 1024), "3.5 GB", "GB 带一位小数")
+eq(Format.bytes(Double.nan), "0 B", "nan → 0 B")
+eq(Format.bytes(-5), "0 B", "负数 → 0 B")
+eq(Format.rate(0), "0 B/s", "零速率")
+eq(Format.rate(1024), "1 KB/s", "速率带 /s")
+eq(Format.percent(0.156), "16%", "百分比四舍五入")
+eq(Format.percent(-1), "0%", "百分比下限")
+eq(Format.percent(2), "100%", "百分比上限")
+eq(Format.percent(Double.nan), "0%", "nan → 0%")
+
+section("菜单栏折叠：布局判定与分组")
+eq(FoldState.folded.toggled, FoldState.expanded, "折叠状态取反")
+eq(FoldState.expanded.toggled, FoldState.folded, "展开状态取反")
+
+// 刘海机型：可用区左边界不是 0
+check(MenuBarLayout.isOnScreen(frame: CGRect(x: 1200, y: 0, width: 30, height: 24),
+                               visibleMinX: 1000), "在可见区内 → 可见")
+check(!MenuBarLayout.isOnScreen(frame: CGRect(x: 900, y: 0, width: 30, height: 24),
+                                visibleMinX: 1000), "在可见区左侧 → 被裁掉")
+check(MenuBarLayout.isOnScreen(frame: CGRect(x: 1000, y: 0, width: 30, height: 24),
+                               visibleMinX: 1000), "正好在边界上 → 可见")
+check(!MenuBarLayout.isOnScreen(frame: CGRect(x: 1200, y: 0, width: 0, height: 24),
+                               visibleMinX: 1000), "宽度为 0 → 不算可见")
+
+func mkItem(_ app: String, x: CGFloat, onScreen: Bool, index: Int = 0,
+            help: String? = nil, title: String? = nil) -> MenuBarItemInfo {
+    MenuBarItemInfo(pid: 1, appName: app, bundleID: "x.\(app)", index: index,
+                    title: title, help: help,
+                    frame: CGRect(x: x, y: 0, width: 24, height: 24),
+                    isPressable: true, isOnScreen: onScreen)
+}
+
+do {
+    let items = [mkItem("Zebra", x: 1400, onScreen: true),
+                 mkItem("Alpha", x: 1300, onScreen: true),
+                 mkItem("Hidden", x: 200, onScreen: false)]
+    let groups = MenuBarLayout.grouped(items)
+    eq(groups.count, 3, "按 App 分成 3 组")
+    eq(groups[0].app, "Hidden", "屏幕上放不下的排最前（那才是用户要找的）")
+    eq(groups[1].app, "Alpha", "其余按名称排序")
+    eq(groups[2].app, "Zebra", "其余按名称排序")
+}
+do {  // 同一 App 多个项：组内按菜单栏从左到右
+    let items = [mkItem("Multi", x: 1400, onScreen: true, index: 1),
+                 mkItem("Multi", x: 1300, onScreen: true, index: 0)]
+    let groups = MenuBarLayout.grouped(items)
+    eq(groups.count, 1, "同一 App 合成一组")
+    eq(groups[0].items.first?.frame.minX, 1300, "组内按 x 从小到大")
+}
+
+check(!MenuBarLayout.shouldScan(bundleID: nil), "无 bundle id 不扫描")
+check(!MenuBarLayout.shouldScan(bundleID: ""), "空 bundle id 不扫描")
+check(!MenuBarLayout.shouldScan(bundleID: "com.apple.controlcenter"), "控制中心不扫描")
+check(!MenuBarLayout.shouldScan(bundleID: "com.apple.WebKit.GPU"), "WebKit XPC 不扫描")
+check(!MenuBarLayout.shouldScan(bundleID: "com.google.Chrome.helper"), ".helper 结尾不扫描")
+check(MenuBarLayout.shouldScan(bundleID: "com.todesk.mac"), "普通第三方 App 要扫描")
+
+section("菜单栏项：状态文字提取")
+eq(mkItem("A", x: 0, onScreen: true, help: "已连接").statusText, "已连接", "优先取 tooltip")
+eq(mkItem("A", x: 0, onScreen: true, title: "3").statusText, "3", "没有 tooltip 时取标题")
+check(mkItem("飞书", x: 0, onScreen: true, help: "飞书").statusText == nil,
+      "tooltip 就是 App 名字本身 → 不当作状态显示")
+check(mkItem("A", x: 0, onScreen: true, help: "   ").statusText == nil, "空白 tooltip 忽略")
+eq(mkItem("A", x: 0, onScreen: true, help: "  已同步  ").statusText, "已同步", "状态文字去空白")
+eq(mkItem("A", x: 0, onScreen: true, index: 0).displayName, "A", "单项显示 App 名")
+eq(mkItem("A", x: 0, onScreen: true, index: 2).displayName, "A · 3", "多项加序号")
 
 // MARK: - 汇总
 
