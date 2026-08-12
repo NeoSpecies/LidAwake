@@ -193,6 +193,25 @@ final class MenuController: NSObject, NSMenuDelegate {
         }
     }
 
+    private func setFan(_ mode: FanMode) {
+        client.setFanAsync(FanRequest(mode: mode)) { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let s):
+                    self?.status = s
+                    self?.applyStateToUI()
+                    if mode == .full {
+                        Alerts.show("风扇已设为全速",
+                                    "会明显变响。任何时候可以从菜单选「自动（交还系统）」还回去。\n\n"
+                                    + "LidAwake 退出、崩溃、卸载或重启时都会自动交还固件控制。")
+                    }
+                case .failure(let e):
+                    Alerts.show("风扇设置失败", e.localizedDescription, style: .warning)
+                }
+            }
+        }
+    }
+
     private func updateGuards(_ transform: (inout Guards) -> Void) {
         guard var g = status?.guards else {
             Alerts.show("需要后台服务", "安全策略由后台服务负责执行。请先运行「安装 / 修复后台服务」。",
@@ -417,6 +436,43 @@ final class MenuController: NSObject, NSMenuDelegate {
             }
         }
 
+        if let fan = status?.fan, fan.supported {
+            let rpm = fan.actualRPM.map { String(format: "%.0f", $0) }.joined(separator: "/")
+            let temp = fan.maxTempC.map { String(format: " · %.0f°C", $0) } ?? ""
+            menu.addSubmenu("风扇：\(fan.mode.chinese)  \(rpm) RPM\(temp)") { sub in
+                sub.addDisabled(String(format: "量程 %.0f–%.0f RPM · 当前 %@ RPM%@",
+                                       fan.minRPM, fan.maxRPM, rpm as NSString, temp as NSString))
+                if let t = fan.targetRPM {
+                    sub.addDisabled(String(format: "LidAwake 接管中，目标 %.0f RPM", t))
+                } else {
+                    sub.addDisabled("固件控制中")
+                }
+                sub.addItem(.separator())
+                sub.addAction("自动（交还系统）", state: fan.mode == .auto ? .on : .off) {
+                    [weak self] in self?.setFan(.auto)
+                }
+                sub.addAction("按温度自动提速", state: fan.mode == .curve ? .on : .off) {
+                    [weak self] in self?.setFan(.curve)
+                }
+                sub.addItem(.separator())
+                for pct in [40, 55, 70, 85] {
+                    let rpmAt = fan.minRPM + Double(pct) / 100 * (fan.maxRPM - fan.minRPM)
+                    sub.addAction(String(format: "%d%%（约 %.0f RPM）", pct, rpmAt),
+                                  state: fan.mode == .percent(pct) ? .on : .off) {
+                        [weak self] in self?.setFan(.percent(pct))
+                    }
+                }
+                sub.addAction("全速", state: fan.mode == .full ? .on : .off) {
+                    [weak self] in self?.setFan(.full)
+                }
+                sub.addItem(.separator())
+                sub.addDisabled("只提速不降速：温度越高允许的最低转速越高")
+                sub.addDisabled(String(format: "≥%.0f°C 无条件全速", fan.policy.criticalC))
+                if let sensor = fan.hottestSensor {
+                    sub.addDisabled("最热传感器: \(sensor)")
+                }
+            }
+        }
         menu.addAction("诊断信息…") { [weak self] in self?.showDiagnostics() }
 
         menu.addItem(.separator())

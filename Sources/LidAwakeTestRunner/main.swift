@@ -411,6 +411,90 @@ eq(mkItem("A", x: 0, onScreen: true, help: "  已同步  ").statusText, "已同�
 eq(mkItem("A", x: 0, onScreen: true, index: 0).displayName, "A", "单项显示 App 名")
 eq(mkItem("A", x: 0, onScreen: true, index: 2).displayName, "A · 3", "多项加序号")
 
+section("风扇：决策引擎（纯函数）")
+let fr = FanRange(minRPM: 1350, maxRPM: 5350)     // 与本机实测量程一致
+let fp = FanPolicy(curveStartC: 70, curveFullC: 95, criticalC: 100)
+
+eq(FanEngine.decide(mode: .auto, maxTempC: 50, range: fr, policy: fp),
+   .releaseToFirmware, "auto → 交还固件")
+eq(FanEngine.decide(mode: .auto, maxTempC: 105, range: fr, policy: fp),
+   .releaseToFirmware, "auto 模式下即使高温也不接管（固件自己会处理）")
+eq(FanEngine.decide(mode: .full, maxTempC: 50, range: fr, policy: fp),
+   .setTarget(5350), "full → 最大转速")
+eq(FanEngine.decide(mode: .percent(50), maxTempC: 105, range: fr, policy: fp),
+   .setTarget(5350), "临界温度覆盖用户设置 → 全速")
+eq(FanEngine.decide(mode: .percent(0), maxTempC: 60, range: fr, policy: fp),
+   .setTarget(1350), "0% + 低温 → 最低转速（不低于 F0Mn）")
+eq(FanEngine.decide(mode: .percent(100), maxTempC: 60, range: fr, policy: fp),
+   .setTarget(5350), "100% → 最大转速")
+eq(FanEngine.decide(mode: .auto, maxTempC: 60, range: FanRange(minRPM: 0, maxRPM: 0), policy: fp),
+   .releaseToFirmware, "量程非法（无风扇）→ 交还固件")
+eq(FanEngine.decide(mode: .full, maxTempC: 60, range: FanRange(minRPM: 5000, maxRPM: 1000), policy: fp),
+   .releaseToFirmware, "量程颠倒 → 交还固件，不写任何值")
+
+// 安全下限：这是"只提速不降速"承诺的核心
+do {
+    let low = FanEngine.decide(mode: .percent(10), maxTempC: 92, range: fr, policy: fp)
+    if case .setTarget(let rpm) = low {
+        let floor80 = 1350 + 0.80 * (5350 - 1350)
+        check(rpm >= floor80 - 0.5,
+              "92°C 时 10% 被安全下限顶到 ≥80%（得到 \(Int(rpm))，下限 \(Int(floor80))）")
+    } else { check(false, "92°C + 10% 应当接管", "得到 \(low)") }
+}
+do {
+    let low = FanEngine.decide(mode: .percent(10), maxTempC: 60, range: fr, policy: fp)
+    if case .setTarget(let rpm) = low {
+        check(abs(rpm - (1350 + 0.10 * 4000)) < 0.5, "60°C 时 10% 不被顶高（低温不干预）")
+    } else { check(false, "60°C + 10% 应当接管") }
+}
+eq(FanEngine.safetyFloor(1400, maxTempC: nil, range: fr, policy: fp), 1400,
+   "温度读不到时不施加下限（但也不会低于 Mn）")
+eq(FanEngine.safetyFloor(100, maxTempC: 60, range: fr, policy: fp), 1350,
+   "请求低于 Mn → 夹到 Mn")
+eq(FanEngine.safetyFloor(99999, maxTempC: 60, range: fr, policy: fp), 5350,
+   "请求高于 Mx → 夹到 Mx")
+
+// 曲线
+eq(FanEngine.decide(mode: .curve, maxTempC: 60, range: fr, policy: fp),
+   .releaseToFirmware, "曲线：低于起点 → 交还固件（不比固件更保守）")
+eq(FanEngine.decide(mode: .curve, maxTempC: 95, range: fr, policy: fp),
+   .setTarget(5350), "曲线：到达终点 → 全速")
+eq(FanEngine.decide(mode: .curve, maxTempC: nil, range: fr, policy: fp),
+   .releaseToFirmware, "曲线：读不到温度 → 交还固件")
+do {
+    let mid = FanEngine.decide(mode: .curve, maxTempC: 82.5, range: fr, policy: fp)
+    if case .setTarget(let rpm) = mid {
+        check(rpm > 1350 && rpm < 5350, "曲线中点在量程内爬升（得到 \(Int(rpm)) RPM）")
+    } else { check(false, "曲线中点应当接管") }
+}
+
+section("风扇：策略校验与编解码")
+eq(FanPolicy(curveStartC: 10).validated().curveStartC, 50, "曲线起点下限夹紧")
+eq(FanPolicy(curveStartC: 200).validated().curveStartC, 90, "曲线起点上限夹紧")
+eq(FanPolicy(criticalC: 999).validated().criticalC, 110, "临界温度上限夹紧")
+eq(FanPolicy(curveStartC: 80, curveFullC: 70).validated().curveFullC, 90,
+   "终点不高于起点时自动修正")
+eq(FanPolicy(curveStartC: Double.nan).validated().curveStartC, 70, "nan → 回落默认值")
+eq(FanRequest(mode: .percent(500)).validated().mode, FanMode.percent(100), "百分比上限夹紧")
+eq(FanRequest(mode: .percent(-20)).validated().mode, FanMode.percent(0), "百分比下限夹紧")
+do {
+    for m in [FanMode.auto, .full, .curve, .percent(42)] {
+        let back = try JSON.decode(FanMode.self, try JSON.encode(m))
+        check(back == m, "FanMode round-trip: \(m.label)")
+    }
+    let p = FanPolicy(curveStartC: 72, curveFullC: 93, criticalC: 99)
+    check(try JSON.decode(FanPolicy.self, try JSON.encode(p)) == p, "FanPolicy round-trip")
+} catch { check(false, "风扇编解码", "\(error)") }
+
+eq(FanEngine.reevaluateInterval(mode: .auto), 0, "auto 不需要定时器")
+eq(FanEngine.reevaluateInterval(mode: .curve), 5, "曲线模式 5s 跟温度")
+eq(FanEngine.reevaluateInterval(mode: .full), 20, "固定模式 20s 复查")
+
+check(!Engine.shouldIdleExit(mode: .off, connectedClients: 0, fanMode: .full),
+      "风扇手动模式下守护进程绝不自退（否则没人交还控制权）")
+check(Engine.shouldIdleExit(mode: .off, connectedClients: 0, fanMode: .auto),
+      "风扇 auto + 会话关闭 + 无客户端 → 可自退")
+
 // MARK: - 汇总
 
 print("\n────────────────────────────")

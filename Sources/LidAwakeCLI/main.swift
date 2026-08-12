@@ -11,6 +11,7 @@ LidAwake \(LidAwakeInfo.version) — 合盖续跑（macOS 原生）
   lidawake guards [--battery-floor <N|off>] [--max <时长|off>]
                   [--require-ac <on|off>] [--thermal <on|off>]
                   [--display-awake <on|off>] [--persist-reboot <on|off>]
+  lidawake fan auto|full|<百分比>|curve [--start <°C>] [--full-at <°C>] [--critical <°C>]
   lidawake doctor
   lidawake --version
 
@@ -104,6 +105,12 @@ func printStatusHuman(_ s: StatusDTO) {
         lines.append("上次结束      : \(r.chinese)\(when)")
     }
     if let note = s.degradedNote { lines.append("⚠️ 降级        : \(note)") }
+    if let f = s.fan, f.supported {
+        let rpm = f.actualRPM.map { String(format: "%.0f", $0) }.joined(separator: "/")
+        var line = "风扇          : \(f.mode.chinese)  \(rpm) RPM"
+        if let t = f.maxTempC { line += String(format: "  最高温 %.1f°C", t) }
+        lines.append(line)
+    }
     lines.append("服务 PID      : \(s.daemonPID)")
     print(lines.joined(separator: "\n"))
 }
@@ -238,6 +245,63 @@ case "guards":
     if let extra = argv.first { fail("未知参数: \(extra)", code: 1) }
     do { emit(try client.setGuards(g)) }
     catch { fail(error.localizedDescription, code: 2) }
+
+case "fan":
+    guard let sub = argv.first else {
+        // 不带参数就报告当前状态
+        let s = requireStatus()
+        guard let f = s.fan, f.supported else {
+            print("这台机器没有可控风扇（或 SMC 不可用）"); exit(0)
+        }
+        print("风扇模式    : \(f.mode.chinese)")
+        print("风扇转速    : " + f.actualRPM.map { String(format: "%.0f RPM", $0) }
+                                   .joined(separator: " / ")
+              + String(format: "   量程 %.0f–%.0f", f.minRPM, f.maxRPM))
+        if let t = f.targetRPM { print(String(format: "当前目标    : %.0f RPM（LidAwake 接管中）", t)) }
+        else { print("当前目标    : 固件控制中") }
+        if let t = f.maxTempC {
+            print(String(format: "最高温度    : %.1f °C  (%@)", t, (f.hottestSensor ?? "?") as NSString))
+        }
+        print("温度曲线    : \(Int(f.policy.curveStartC))°C 起 → \(Int(f.policy.curveFullC))°C 全速"
+              + "，\(Int(f.policy.criticalC))°C 无条件全速")
+        exit(0)
+    }
+    argv.removeFirst()
+    var policy: FanPolicy?
+    func policyValue(_ name: String, _ apply: (inout FanPolicy, Double) -> Void) {
+        guard let raw = optionValue(name) else { return }
+        guard let v = Double(raw), v.isFinite else { fail("\(name) 需要数字", code: 1) }
+        var p = policy ?? requireStatus().fan?.policy ?? FanPolicy()
+        apply(&p, v)
+        policy = p
+    }
+    policyValue("--start") { $0.curveStartC = $1 }
+    policyValue("--full-at") { $0.curveFullC = $1 }
+    policyValue("--critical") { $0.criticalC = $1 }
+
+    let mode: FanMode
+    switch sub.lowercased() {
+    case "auto": mode = .auto
+    case "full", "max": mode = .full
+    case "curve": mode = .curve
+    default:
+        guard let pct = Int(sub.replacingOccurrences(of: "%", with: "")),
+              (0...100).contains(pct) else {
+            fail("风扇模式只能是 auto / full / curve / 0-100 的百分比", code: 1)
+        }
+        mode = .percent(pct)
+    }
+    if let extra = argv.first { fail("未知参数: \(extra)", code: 1) }
+    do {
+        let s = try client.setFan(FanRequest(mode: mode, policy: policy))
+        if let f = s.fan, f.supported {
+            print("已设为 \(f.mode.chinese)")
+            if let t = f.targetRPM { print(String(format: "目标转速: %.0f RPM", t)) }
+            if let t = f.maxTempC { print(String(format: "当前最高温: %.1f °C", t)) }
+        } else {
+            fail("这台机器没有可控风扇", code: 2)
+        }
+    } catch { fail(error.localizedDescription, code: 2) }
 
 case "doctor":
     doctor()

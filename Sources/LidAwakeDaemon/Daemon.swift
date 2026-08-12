@@ -8,6 +8,7 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
     private let store = StateStore()
     private let sleepCtl = SleepDisabledController()
     private let assertions = AssertionHolder()
+    private let fan = FanController()
     private let listener = NSXPCListener(machServiceName: LidAwakeInfo.machServiceName)
 
     private var state = PersistedState()
@@ -16,11 +17,14 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
     private var signalSources: [DispatchSourceSignal] = []
 
     private var deadlineTimer: DispatchSourceTimer?
+    private var fanTimer: DispatchSourceTimer?
     private var heartbeatTimer: DispatchSourceTimer?
     private var idleTimer: DispatchSourceTimer?
 
     private var degradedNote: String?
     private var terminating = false
+    /// 最近一次施加的风扇目标。SMC 回读有几秒滞后，立即回显用这个值才准确。
+    private var lastFanTarget: Double?
 
     /// 关闭状态下空闲多久自退（零常驻开销）。launchd 会在下次连接时按需拉起。
     private let idleExitSeconds: Double = 120
@@ -36,6 +40,13 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
             Log.warn("非 root 运行：SleepDisabled 无法施加，将只有断言层生效")
         }
 
+        if fan.isAvailable {
+            let r = fan.readOnly.range()
+            Log.info("风扇可控: \(fan.fanCount) 个，量程 \(Int(r.minRPM))–\(Int(r.maxRPM)) RPM，"
+                     + "温度传感器 \(fan.readOnly.discoveredSensorCount) 个")
+        } else {
+            Log.info("风扇不可控（无风扇或 SMC 不可用）")
+        }
         loadStateWithBootReconcile()
         installSignalHandlers()
 
@@ -68,9 +79,17 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
             s.lastReleaseReason = .rebootReset
             s.lastReleaseAt = Date()
         }
+        // 风扇控制**永远不跨重启保留** —— 开机后必须由固件接管，
+        // 否则一旦守护进程起不来，风扇就被锁在上次的转速上了。
+        if s.fanMode.isManual {
+            Log.info("开机复位：风扇模式 \(s.fanMode.label) → auto")
+            s.fanMode = .auto
+        }
         s.bootTimeEpoch = boot
         s.guards = s.guards.validated()
+        s.fanPolicy = s.fanPolicy.validated()
         state = s
+        _ = fan.release()
     }
 
     private func installSignalHandlers() {
@@ -100,6 +119,11 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
             state.origin = nil
         }
         assertions.releaseAll()
+        let fanOK = fan.release()
+        if state.fanMode.isManual {
+            state.fanMode = .auto
+            Log.info("风扇控制权已交还固件 \(fanOK ? "✅" : "❌")")
+        }
         let ok = sleepCtl.set(false)
         persist()
         Log.info("收到信号 \(sig)：已释放断言，SleepDisabled 复位\(ok ? "成功" : "失败(!)")"
@@ -111,6 +135,7 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
         guard !terminating else { return }
         terminating = true
         assertions.releaseAll()
+        _ = fan.release()
         _ = sleepCtl.set(false)
         persist()
         Log.info("空闲 \(Int(idleExitSeconds))s 自动退出（关闭状态零常驻开销）")
@@ -143,10 +168,27 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
             }
             applyInactive()
         }
+        reconcileFan()
         persist()
         scheduleTimers()
         armIdleExit()
         pushStatus()
+    }
+
+    /// 风扇决策与施加。纯函数算目标，这里只负责写 SMC。
+    private func reconcileFan() {
+        guard fan.isAvailable else { return }
+        let decision = FanEngine.decide(mode: state.fanMode,
+                                        maxTempC: fan.readOnly.hottest()?.celsius,
+                                        range: fan.readOnly.range(),
+                                        policy: state.fanPolicy)
+        if !fan.apply(decision) {
+            Log.error("风扇指令施加失败（\(state.fanMode.label)）")
+        }
+        switch decision {
+        case .setTarget(let rpm): lastFanTarget = rpm
+        case .releaseToFirmware: lastFanTarget = nil
+        }
     }
 
     private func applyActive() {
@@ -188,6 +230,8 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
     private func scheduleTimers() {
         deadlineTimer?.cancel(); deadlineTimer = nil
         heartbeatTimer?.cancel(); heartbeatTimer = nil
+        // 风扇定时器独立于合盖会话：只开风扇不开合盖续跑也要能工作
+        scheduleFanTimer()
         guard state.mode.isActive else { return }
 
         if let deadline = Engine.nextEvaluation(mode: state.mode,
@@ -210,14 +254,28 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
         heartbeatTimer = hb
     }
 
+    /// 曲线模式要跟温度走（5s）；固定模式只需偶尔复查，防止固件把 md 复位（20s）。
+    private func scheduleFanTimer() {
+        fanTimer?.cancel(); fanTimer = nil
+        let interval = FanEngine.reevaluateInterval(mode: state.fanMode)
+        guard interval > 0, fan.isAvailable else { return }
+        let t = DispatchSource.makeTimerSource(queue: q)
+        t.schedule(deadline: .now() + interval, repeating: interval, leeway: .seconds(1))
+        t.setEventHandler { [weak self] in self?.reconcileFan() }
+        t.resume()
+        fanTimer = t
+    }
+
     private func armIdleExit() {
         idleTimer?.cancel(); idleTimer = nil
-        guard Engine.shouldIdleExit(mode: state.mode, connectedClients: clients.count) else { return }
+        guard Engine.shouldIdleExit(mode: state.mode, connectedClients: clients.count,
+                                    fanMode: state.fanMode) else { return }
         let t = DispatchSource.makeTimerSource(queue: q)
         t.schedule(deadline: .now() + idleExitSeconds, leeway: .seconds(5))
         t.setEventHandler { [weak self] in
             guard let self else { return }
-            if Engine.shouldIdleExit(mode: self.state.mode, connectedClients: self.clients.count) {
+            if Engine.shouldIdleExit(mode: self.state.mode, connectedClients: self.clients.count,
+                                     fanMode: self.state.fanMode) {
                 self.gracefulIdleExit()
             }
         }
@@ -253,7 +311,17 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
                          lastReleaseReason: state.lastReleaseReason,
                          lastReleaseAt: state.lastReleaseAt,
                          daemonPID: getpid(),
-                         degradedNote: degradedNote)
+                         degradedNote: degradedNote,
+                         fan: fan.isAvailable ? fanStatus() : FanStatus(
+                            supported: false, note: "这台机器没有可控风扇"))
+    }
+
+    private func fanStatus() -> FanStatus {
+        var s = fan.status(mode: state.fanMode, policy: state.fanPolicy)
+        // 用刚决定的目标覆盖 SMC 回读（回读有滞后，刚设完会显示旧值）
+        if state.fanMode.isManual { s.targetRPM = lastFanTarget ?? s.targetRPM }
+        else { s.targetRPM = nil }
+        return s
     }
 
     private func pushStatus() {
@@ -361,6 +429,30 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
             self.state.guards = incoming
             Log.info("setGuards floor=\(incoming.batteryFloorPercent.map(String.init) ?? "off") ac=\(incoming.requireExternalPower) thermal=\(incoming.releaseOnCriticalThermal) max=\(incoming.maxSessionSeconds.map { Int($0) }.map(String.init) ?? "off") display=\(incoming.keepDisplayAwake) persist=\(incoming.persistAcrossReboot)")
             self.reconcile(trigger: "setGuards")
+            do { reply(try JSON.encode(self.makeStatus()), nil) }
+            catch { reply(nil, "状态序列化失败: \(error)") }
+        }
+    }
+    func setFan(_ fanJSON: Data, reply: @escaping (Data?, String?) -> Void) {
+        let request: FanRequest
+        do { request = try JSON.decode(FanRequest.self, fanJSON).validated() }
+        catch { reply(nil, "风扇请求解析失败: \(error)"); return }
+
+        q.async { [weak self] in
+            guard let self, !self.terminating else { reply(nil, "服务正在退出"); return }
+            guard self.fan.isAvailable else {
+                reply(nil, "这台机器没有可控风扇（或 SMC 不可用）"); return
+            }
+            self.state.fanMode = request.mode
+            if let p = request.policy { self.state.fanPolicy = p }
+            Log.info("setFan \(request.mode.label) 起点=\(Int(self.state.fanPolicy.curveStartC))°C "
+                     + "全速=\(Int(self.state.fanPolicy.curveFullC))°C "
+                     + "临界=\(Int(self.state.fanPolicy.criticalC))°C")
+            self.reconcileFan()
+            self.persist()
+            self.scheduleFanTimer()
+            self.armIdleExit()
+            self.pushStatus()
             do { reply(try JSON.encode(self.makeStatus()), nil) }
             catch { reply(nil, "状态序列化失败: \(error)") }
         }

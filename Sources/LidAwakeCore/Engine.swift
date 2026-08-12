@@ -62,8 +62,11 @@ public enum Engine {
 
     /// 守护进程是否可以空闲自退（零常驻开销）。
     /// 会话激活时永不自退 —— 否则定时器和守卫就失效了。
-    public static func shouldIdleExit(mode: Mode, connectedClients: Int) -> Bool {
-        !mode.isActive && connectedClients == 0
+    public static func shouldIdleExit(mode: Mode, connectedClients: Int,
+                                      fanMode: FanMode = .auto) -> Bool {
+        // 风扇处于手动模式时也不能退 —— 退了就没人在温度变化时重新评估，
+        // 更没人在退出时把控制权交还固件。
+        !mode.isActive && connectedClients == 0 && !fanMode.isManual
     }
 
     /// 重启后是否需要复位会话（失效安全）。

@@ -1,7 +1,7 @@
 import Foundation
 
 public enum LidAwakeInfo {
-    public static let version = "1.1.0"
+    public static let version = "1.2.0"
     public static let bundleID = "com.cogito.LidAwake"
     public static let machServiceName = "com.cogito.lidawaked"
     public static let daemonLabel = "com.cogito.lidawaked"
@@ -241,6 +241,8 @@ public struct PersistedState: Codable, Equatable, Sendable {
     public var bootTimeEpoch: Double
     public var lastReleaseReason: ReleaseReason?
     public var lastReleaseAt: Date?
+    public var fanMode: FanMode
+    public var fanPolicy: FanPolicy
 
     public init(version: Int = 1,
                 mode: Mode = .off,
@@ -249,7 +251,11 @@ public struct PersistedState: Codable, Equatable, Sendable {
                 guards: Guards = Guards(),
                 bootTimeEpoch: Double = 0,
                 lastReleaseReason: ReleaseReason? = nil,
-                lastReleaseAt: Date? = nil) {
+                lastReleaseAt: Date? = nil,
+                fanMode: FanMode = .auto,
+                fanPolicy: FanPolicy = FanPolicy()) {
+        self.fanMode = fanMode
+        self.fanPolicy = fanPolicy
         self.version = version
         self.mode = mode
         self.startedAt = startedAt
@@ -262,7 +268,7 @@ public struct PersistedState: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case version, mode, startedAt, origin, guards, bootTimeEpoch
-        case lastReleaseReason, lastReleaseAt
+        case lastReleaseReason, lastReleaseAt, fanMode, fanPolicy
     }
 
     public init(from decoder: Decoder) throws {
@@ -275,6 +281,8 @@ public struct PersistedState: Codable, Equatable, Sendable {
         bootTimeEpoch = try c.decodeIfPresent(Double.self, forKey: .bootTimeEpoch) ?? 0
         lastReleaseReason = try c.decodeIfPresent(ReleaseReason.self, forKey: .lastReleaseReason)
         lastReleaseAt = try c.decodeIfPresent(Date.self, forKey: .lastReleaseAt)
+        fanMode = try c.decodeIfPresent(FanMode.self, forKey: .fanMode) ?? .auto
+        fanPolicy = try c.decodeIfPresent(FanPolicy.self, forKey: .fanPolicy) ?? FanPolicy()
     }
 }
 
@@ -365,6 +373,25 @@ public enum ApplyRequest: Codable, Equatable, Sendable {
     }
 }
 
+/// 风扇设置请求。和 ApplyRequest 一样：**只有枚举与数字，没有任何路径/命令字段**。
+public struct FanRequest: Codable, Equatable, Sendable {
+    public var mode: FanMode
+    public var policy: FanPolicy?
+
+    public init(mode: FanMode, policy: FanPolicy? = nil) {
+        self.mode = mode
+        self.policy = policy
+    }
+
+    /// 服务端必须调用：百分比夹到 0…100，曲线阈值夹到合法区间。
+    public func validated() -> FanRequest {
+        var r = self
+        if case .percent(let p) = mode { r.mode = .percent(min(max(p, 0), 100)) }
+        r.policy = policy?.validated()
+        return r
+    }
+}
+
 public enum Mechanism: String, Codable, Sendable {
     /// 断言层 + SleepDisabled，含纯电池可靠。
     case full
@@ -401,6 +428,7 @@ public struct StatusDTO: Codable, Sendable {
     public var lastReleaseAt: Date?
     public var daemonPID: Int32
     public var degradedNote: String?
+    public var fan: FanStatus?
 
     public init(version: String = LidAwakeInfo.version,
                 mode: Mode = .off,
@@ -420,7 +448,9 @@ public struct StatusDTO: Codable, Sendable {
                 lastReleaseReason: ReleaseReason? = nil,
                 lastReleaseAt: Date? = nil,
                 daemonPID: Int32 = 0,
-                degradedNote: String? = nil) {
+                degradedNote: String? = nil,
+                fan: FanStatus? = nil) {
+        self.fan = fan
         self.version = version
         self.mode = mode
         self.active = active

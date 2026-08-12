@@ -98,6 +98,23 @@ public final class DaemonClient: NSObject, ClientAPI {
         }
     }
 
+    public func setFanAsync(_ request: FanRequest,
+                            _ completion: @escaping (Result<StatusDTO, Error>) -> Void) {
+        do {
+            let payload = try JSON.encode(request)
+            guard let p = proxy({ completion(.failure($0)) }) else {
+                completion(.failure(LidAwakeError.daemonUnavailable("无法建立代理"))); return
+            }
+            p.setFan(payload) { data, err in completion(Self.decode(data, err)) }
+        } catch {
+            completion(.failure(error))
+        }
+    }
+
+    public func setFan(_ r: FanRequest, timeout: Double = 8) throws -> StatusDTO {
+        try sync(timeout: timeout) { setFanAsync(r, $0) }
+    }
+
     private static func decode(_ data: Data?, _ err: String?) -> Result<StatusDTO, Error> {
         if let err { return .failure(LidAwakeError.applyFailed(err)) }
         guard let data else { return .failure(LidAwakeError.decoding("空响应")) }

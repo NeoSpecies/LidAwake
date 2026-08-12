@@ -32,10 +32,19 @@ final class StatusItemScanner {
     func scan() -> [MenuBarItemInfo] {
         guard Permissions.accessibilityGranted else { return [] }
 
-        let screen = NSScreen.screens.first { $0.frame.minY == 0 } ?? NSScreen.main
-        let visibleMinX = Self.menuBarVisibleMinX(for: screen)
-        // AX 用的是"左上原点"坐标系，NSScreen 用左下原点；菜单栏在顶部，
-        // 这里只比较 X，不需要做 Y 转换。
+        // 每块屏的菜单栏可用区左边界。**必须逐屏算**：
+        // 之前只挑一块屏（frame.minY == 0）算，多屏时会把另一块屏上的图标全判成"被裁掉"，
+        // 而只用内屏时又可能漏掉刘海。AX 与 NSScreen 的 X 轴原点一致（都以主屏左边为 0），
+        // 菜单栏在顶部所以只比较 X，不需要做 Y 翻转。
+        let screenBounds: [(frame: CGRect, visibleMinX: CGFloat)] = NSScreen.screens.map {
+            ($0.frame, Self.menuBarVisibleMinX(for: $0))
+        }
+        func visibleMinX(forX x: CGFloat) -> CGFloat {
+            for s in screenBounds where x >= s.frame.minX && x < s.frame.maxX {
+                return s.visibleMinX
+            }
+            return screenBounds.first?.visibleMinX ?? 0
+        }
         var result: [MenuBarItemInfo] = []
 
         for app in NSWorkspace.shared.runningApplications {
@@ -70,7 +79,8 @@ final class StatusItemScanner {
                     descriptionText: Self.string(element, kAXDescriptionAttribute),
                     frame: frame,
                     isPressable: Self.actions(element).contains(kAXPressAction),
-                    isOnScreen: MenuBarLayout.isOnScreen(frame: frame, visibleMinX: visibleMinX))
+                    isOnScreen: MenuBarLayout.isOnScreen(
+                        frame: frame, visibleMinX: visibleMinX(forX: frame.minX)))
                 // 完全没有尺寸的项通常是占位/隐藏项，不值得列
                 if info.frame.width <= 0 && info.statusText == nil { continue }
                 result.append(info)
