@@ -435,7 +435,9 @@ final class MenuController: NSObject, NSMenuDelegate {
             sub.addAction(foldEnabled ? "打开面板（\(self.foldFeature.hotKeyName)）" : "打开面板",
                           state: nil) { [weak self] in self?.foldFeature.openPanel() }
             if foldEnabled {
-                sub.addAction(self.foldFeature.foldState == .folded ? "展开菜单栏图标" : "折叠菜单栏图标") {
+                // 折叠是设置项，只在这里出现；面板本身只负责展示与跳转
+                sub.addAction(self.foldFeature.foldState == .folded
+                              ? "展开菜单栏图标（当前已折叠）" : "折叠菜单栏图标") {
                     [weak self] in self?.foldFeature.toggleFold()
                 }
             }

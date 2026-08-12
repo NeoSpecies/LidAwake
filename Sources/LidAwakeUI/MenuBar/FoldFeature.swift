@@ -12,14 +12,12 @@ import LidAwakeCore
 final class FoldFeature {
 
     private var fold: FoldController?
-    private let panel = BarPanelController()
+    private let barMenu = BarMenuController()
     private let hotkey = HotKey()
 
     var onStateChange: (() -> Void)?
 
     init() {
-        panel.onToggleFold = { [weak self] in self?.fold?.toggle() }
-        panel.foldStateProvider = { [weak self] in self?.fold?.state ?? .expanded }
         if FoldController.isFeatureEnabled { activate() }
     }
 
@@ -34,10 +32,13 @@ final class FoldFeature {
     }
 
     func openPanel() {
-        // 功能没启用时也允许开面板：面板本身（列表 + 系统状态）是有用的，
-        // 只是没有折叠按钮可依附，就居中弹出。
-        panel.toggle(near: fold?.toggleScreenRect)
+        // 功能没启用时也允许开面板：列表 + 系统状态本身就有用，
+        // 只是没有按钮可依附，就在鼠标位置弹出。
+        barMenu.present(from: fold?.anchorButton)
     }
+
+    /// 供自检使用：不弹出，只导出菜单结构
+    func debugMenuDump() -> String { barMenu.debugDump() }
 
     func toggleFold() {
         guard let fold else {
@@ -49,7 +50,6 @@ final class FoldFeature {
     }
 
     func shutdown() {
-        panel.hide()
         deactivate()
     }
 

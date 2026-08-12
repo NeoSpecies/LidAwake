@@ -52,14 +52,12 @@ final class FoldController {
         spacer.button?.image = Symbols.image(["line.3.vertical", "ellipsis"],
                                              description: "折叠边界")
         spacer.button?.imagePosition = .imageOnly
-        spacer.button?.target = self
-        spacer.button?.action = #selector(spacerClicked)
-        spacer.button?.toolTip = "LidAwake 折叠边界 —— 按住 ⌘ 拖动可调整\n它左边的图标会被折叠"
+        // 纯边界标记：不接任何动作。面板只有「〉」一个入口，避免两个图标行为重复。
+        spacer.button?.toolTip = "LidAwake 折叠边界\n按住 ⌘ 拖动可调整位置\n它左边的图标属于被折叠的那一组"
         spacer.autosaveName = "com.cogito.LidAwake.foldSpacer"
 
         toggle.button?.target = self
         toggle.button?.action = #selector(toggleClicked)
-        toggle.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         toggle.autosaveName = "com.cogito.LidAwake.foldToggle"
 
         applyState()
@@ -79,37 +77,25 @@ final class FoldController {
         case .folded:
             spacer.length = collapsedWidth
             spacer.button?.image = nil
-            toggle.button?.image = Symbols.image(["chevron.left", "chevron.compact.left"],
-                                                 description: "展开菜单栏图标")
-            toggle.button?.toolTip = "菜单栏图标已折叠\n单击展开 · 右键打开面板"
+            toggle.button?.image = Symbols.image(["square.grid.2x2.fill", "square.grid.2x2"],
+                                                 description: "菜单栏图标面板")
+            toggle.button?.toolTip = "菜单栏图标已折叠\n单击打开面板"
         case .expanded:
             spacer.length = expandedWidth
             spacer.button?.image = Symbols.image(["line.3.vertical", "ellipsis"],
                                                  description: "折叠边界")
-            toggle.button?.image = Symbols.image(["chevron.right", "chevron.compact.right"],
-                                                 description: "折叠菜单栏图标")
-            toggle.button?.toolTip = "单击折叠左侧图标 · 右键打开面板"
+            toggle.button?.image = Symbols.image(["square.grid.2x2", "square.grid.2x2.fill"],
+                                                 description: "菜单栏图标面板")
+            toggle.button?.toolTip = "单击打开面板（列出全部菜单栏图标）"
         }
     }
 
+    /// 这个按钮只做一件事：打开面板。
+    /// 折叠/展开是设置项，放在 LidAwake 主菜单里 —— 一个图标一个职责。
     @objc private func toggleClicked() {
-        let isRightClick = NSApp.currentEvent?.type == .rightMouseUp
-        let optionHeld = NSApp.currentEvent?.modifierFlags.contains(.option) ?? false
-        if isRightClick || optionHeld {
-            onOpenPanel?()
-        } else {
-            toggle()
-        }
-    }
-
-    @objc private func spacerClicked() {
-        // 点隔断项也打开面板：折叠状态下它是不可见的，展开状态下点它最直观
         onOpenPanel?()
     }
 
-    /// 面板要贴着切换按钮下方弹出，所以需要它在屏幕上的位置。
-    var toggleScreenRect: NSRect? {
-        guard let window = toggle.button?.window else { return nil }
-        return window.convertToScreen(toggle.button?.bounds ?? .zero)
-    }
+    /// 菜单要贴着这个按钮下方弹出
+    var anchorButton: NSStatusBarButton? { toggle.button }
 }

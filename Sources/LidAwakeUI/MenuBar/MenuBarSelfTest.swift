@@ -1,5 +1,6 @@
 import AppKit
 import LidAwakeCore
+import CoreGraphics
 
 /// 菜单栏折叠功能的自检。
 ///
@@ -41,6 +42,27 @@ enum MenuBarSelfTest {
         print("  内存   : \(Format.bytes(mem.used)) / \(Format.bytes(mem.total)) (\(Format.percent(mem.fraction)))  压缩 \(Format.bytes(mem.compressed))  交换 \(Format.bytes(mem.swapUsed))")
         print("  磁盘   : 可用 \(Format.bytes(disk.free)) / \(Format.bytes(disk.total))  IO ↓\(Format.rate(rates.diskReadPerSec)) ↑\(Format.rate(rates.diskWritePerSec))")
         print("  网络   : \(SystemStats.primaryInterface() ?? "未连接")  ↓\(Format.rate(rates.netRxPerSec)) ↑\(Format.rate(rates.netTxPerSec))")
+
+        print("\n── 面板菜单结构（不弹出，直接导出）")
+        let feature = FoldFeature()
+        print(feature.debugMenuDump().split(separator: "\n").map { "  " + $0 }.joined(separator: "\n"))
+
+        print("\n── 网格布局验证（用假数据，覆盖未授权时走不到的那条路径）")
+        for count in [1, 4, 5, 12] {
+            let fake = (0..<count).map { i in
+                MenuBarItemInfo(pid: 1, appName: "App\(i)", bundleID: "x.\(i)", index: 0,
+                                help: i % 3 == 0 ? "已连接" : nil,
+                                frame: CGRect(x: 1000, y: 0, width: 24, height: 24),
+                                isPressable: true, isOnScreen: i % 4 != 0)
+            }
+            let grid = GridPanelView(items: fake, accessibilityGranted: true,
+                                     onSelect: { _ in }, onGrantAccessibility: {})
+            let dims = grid.geometryDump().split(separator: "\n")
+            print("  \(count) 个磁贴 → \(dims.first ?? "")")
+            if let tileLine = dims.first(where: { $0.contains("磁贴") }) {
+                print("      \(tileLine)")
+            }
+        }
 
         print("\n── 菜单栏项枚举（需辅助功能）")
         guard Permissions.accessibilityGranted else {
