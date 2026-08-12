@@ -25,6 +25,9 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
     private var terminating = false
     /// 最近一次施加的风扇目标。SMC 回读有几秒滞后，立即回显用这个值才准确。
     private var lastFanTarget: Double?
+    /// 分档状态：引擎是纯函数，档位与停留时间由这里保存
+    private var fanStep = FanEngine.StepState.firmware
+    private var fanStepChangedAt = Date()
 
     /// 关闭状态下空闲多久自退（零常驻开销）。launchd 会在下次连接时按需拉起。
     private let idleExitSeconds: Double = 120
@@ -178,14 +181,29 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
     /// 风扇决策与施加。纯函数算目标，这里只负责写 SMC。
     private func reconcileFan() {
         guard fan.isAvailable else { return }
-        let decision = FanEngine.decide(mode: state.fanMode,
-                                        maxTempC: fan.readOnly.hottest()?.celsius,
-                                        range: fan.readOnly.range(),
-                                        policy: state.fanPolicy)
-        if !fan.apply(decision) {
+        var input = fanStep
+        input.dwellSeconds = Date().timeIntervalSince(fanStepChangedAt)
+        let result = FanEngine.decide(mode: state.fanMode,
+                                      maxTempC: fan.readOnly.hottest()?.celsius,
+                                      range: fan.readOnly.range(),
+                                      policy: state.fanPolicy,
+                                      state: input)
+        if result.state.index != fanStep.index {
+            fanStepChangedAt = Date()
+            if state.fanMode == .curve {
+                let pct = result.state.index >= 0
+                    && result.state.index < state.fanPolicy.validated().steps.count
+                    ? "\(state.fanPolicy.validated().steps[result.state.index].percent)%"
+                    : "交还固件"
+                Log.info("风扇档位 \(fanStep.index) → \(result.state.index)（\(pct)）"
+                         + " 温度 \(fan.readOnly.hottest().map { String(format: "%.1f°C", $0.celsius) } ?? "?")")
+            }
+        }
+        fanStep = result.state
+        if !fan.apply(result.decision) {
             Log.error("风扇指令施加失败（\(state.fanMode.label)）")
         }
-        switch decision {
+        switch result.decision {
         case .setTarget(let rpm): lastFanTarget = rpm
         case .releaseToFirmware: lastFanTarget = nil
         }
@@ -443,11 +461,17 @@ final class Daemon: NSObject, NSXPCListenerDelegate, DaemonAPI {
             guard self.fan.isAvailable else {
                 reply(nil, "这台机器没有可控风扇（或 SMC 不可用）"); return
             }
+            if self.state.fanMode != request.mode {
+                self.fanStep = .firmware          // 换模式就重新起算档位与停留时间
+                self.fanStepChangedAt = Date()
+            }
             self.state.fanMode = request.mode
             if let p = request.policy { self.state.fanPolicy = p }
-            Log.info("setFan \(request.mode.label) 起点=\(Int(self.state.fanPolicy.curveStartC))°C "
-                     + "全速=\(Int(self.state.fanPolicy.curveFullC))°C "
-                     + "临界=\(Int(self.state.fanPolicy.criticalC))°C")
+            let vp = self.state.fanPolicy.validated()
+            Log.info("setFan \(request.mode.label) 档位="
+                     + vp.steps.map { "\(Int($0.upAtC))→\($0.percent)%" }.joined(separator: ",")
+                     + " 迟滞=\(Int(vp.hysteresisC))°C 停留=\(Int(vp.minDwellSeconds))s"
+                     + " 临界=\(Int(vp.criticalC))°C")
             self.reconcileFan()
             self.persist()
             self.scheduleFanTimer()

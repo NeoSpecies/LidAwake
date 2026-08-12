@@ -11,7 +11,9 @@ LidAwake \(LidAwakeInfo.version) — 合盖续跑（macOS 原生）
   lidawake guards [--battery-floor <N|off>] [--max <时长|off>]
                   [--require-ac <on|off>] [--thermal <on|off>]
                   [--display-awake <on|off>] [--persist-reboot <on|off>]
-  lidawake fan auto|full|<百分比>|curve [--start <°C>] [--full-at <°C>] [--critical <°C>]
+  lidawake fan auto|full|<百分比>|curve
+                  [--preset quiet|balanced|aggressive] [--hysteresis <°C>]
+                  [--dwell <秒>] [--critical <°C>]
   lidawake doctor
   lidawake --version
 
@@ -262,22 +264,39 @@ case "fan":
         if let t = f.maxTempC {
             print(String(format: "最高温度    : %.1f °C  (%@)", t, (f.hottestSensor ?? "?") as NSString))
         }
-        print("温度曲线    : \(Int(f.policy.curveStartC))°C 起 → \(Int(f.policy.curveFullC))°C 全速"
-              + "，\(Int(f.policy.criticalC))°C 无条件全速")
+        let p = f.policy
+        print("分档策略    : " + p.steps.map { "\(Int($0.upAtC))°C→\($0.percent)%" }
+                                    .joined(separator: "  "))
+        print("迟滞/停留   : 回落需低于阈值 \(Int(p.hysteresisC))°C 且停留 ≥ \(Int(p.minDwellSeconds))s"
+              + "，\(Int(p.criticalC))°C 无条件全速")
         exit(0)
     }
     argv.removeFirst()
     var policy: FanPolicy?
-    func policyValue(_ name: String, _ apply: (inout FanPolicy, Double) -> Void) {
-        guard let raw = optionValue(name) else { return }
-        guard let v = Double(raw), v.isFinite else { fail("\(name) 需要数字", code: 1) }
+    func mutate(_ apply: (inout FanPolicy) -> Void) {
         var p = policy ?? requireStatus().fan?.policy ?? FanPolicy()
-        apply(&p, v)
+        apply(&p)
         policy = p
     }
-    policyValue("--start") { $0.curveStartC = $1 }
-    policyValue("--full-at") { $0.curveFullC = $1 }
-    policyValue("--critical") { $0.criticalC = $1 }
+    if let preset = optionValue("--preset") {
+        switch preset.lowercased() {
+        case "quiet", "安静": mutate { $0.steps = FanPolicy.quiet }
+        case "balanced", "均衡": mutate { $0.steps = FanPolicy.balanced }
+        case "aggressive", "激进": mutate { $0.steps = FanPolicy.aggressive }
+        default: fail("--preset 只能是 quiet / balanced / aggressive", code: 1)
+        }
+    }
+    for (name, setter) in [("--hysteresis", 0), ("--dwell", 1), ("--critical", 2)] {
+        guard let raw = optionValue(name) else { continue }
+        guard let v = Double(raw), v.isFinite else { fail("\(name) 需要数字", code: 1) }
+        mutate { p in
+            switch setter {
+            case 0: p.hysteresisC = v
+            case 1: p.minDwellSeconds = v
+            default: p.criticalC = v
+            }
+        }
+    }
 
     let mode: FanMode
     switch sub.lowercased() {

@@ -413,76 +413,110 @@ eq(mkItem("A", x: 0, onScreen: true, index: 2).displayName, "A · 3", "多项加
 
 section("风扇：决策引擎（纯函数）")
 let fr = FanRange(minRPM: 1350, maxRPM: 5350)     // 与本机实测量程一致
-let fp = FanPolicy(curveStartC: 70, curveFullC: 95, criticalC: 100)
+let fp = FanPolicy()                              // 默认 balanced 分档
 
-eq(FanEngine.decide(mode: .auto, maxTempC: 50, range: fr, policy: fp),
-   .releaseToFirmware, "auto → 交还固件")
-eq(FanEngine.decide(mode: .auto, maxTempC: 105, range: fr, policy: fp),
-   .releaseToFirmware, "auto 模式下即使高温也不接管（固件自己会处理）")
-eq(FanEngine.decide(mode: .full, maxTempC: 50, range: fr, policy: fp),
-   .setTarget(5350), "full → 最大转速")
-eq(FanEngine.decide(mode: .percent(50), maxTempC: 105, range: fr, policy: fp),
-   .setTarget(5350), "临界温度覆盖用户设置 → 全速")
-eq(FanEngine.decide(mode: .percent(0), maxTempC: 60, range: fr, policy: fp),
-   .setTarget(1350), "0% + 低温 → 最低转速（不低于 F0Mn）")
-eq(FanEngine.decide(mode: .percent(100), maxTempC: 60, range: fr, policy: fp),
-   .setTarget(5350), "100% → 最大转速")
-eq(FanEngine.decide(mode: .auto, maxTempC: 60, range: FanRange(minRPM: 0, maxRPM: 0), policy: fp),
+func dec(_ mode: FanMode, _ temp: Double?, _ st: FanEngine.StepState = .firmware,
+         _ policy: FanPolicy = fp) -> FanDecision {
+    FanEngine.decide(mode: mode, maxTempC: temp, range: fr, policy: policy, state: st).decision
+}
+func stepOf(_ mode: FanMode, _ temp: Double?, _ st: FanEngine.StepState = .firmware,
+            _ policy: FanPolicy = fp) -> Int {
+    FanEngine.decide(mode: mode, maxTempC: temp, range: fr, policy: policy, state: st).state.index
+}
+
+eq(dec(.auto, 50), .releaseToFirmware, "auto → 交还固件")
+eq(dec(.auto, 105), .releaseToFirmware, "auto 模式下即使高温也不接管（固件自己处理）")
+eq(dec(.full, 50), .setTarget(5350), "full → 最大转速")
+eq(dec(.percent(50), 105), .setTarget(5350), "临界温度覆盖用户设置 → 全速")
+eq(dec(.percent(0), 60), .setTarget(1350), "0% + 低温 → 最低转速（不低于 F0Mn）")
+eq(dec(.percent(100), 60), .setTarget(5350), "100% → 最大转速")
+eq(FanEngine.decide(mode: .auto, maxTempC: 60,
+                    range: FanRange(minRPM: 0, maxRPM: 0), policy: fp).decision,
    .releaseToFirmware, "量程非法（无风扇）→ 交还固件")
-eq(FanEngine.decide(mode: .full, maxTempC: 60, range: FanRange(minRPM: 5000, maxRPM: 1000), policy: fp),
+eq(FanEngine.decide(mode: .full, maxTempC: 60,
+                    range: FanRange(minRPM: 5000, maxRPM: 1000), policy: fp).decision,
    .releaseToFirmware, "量程颠倒 → 交还固件，不写任何值")
 
-// 安全下限：这是"只提速不降速"承诺的核心
+section("风扇：安全下限（只提速不降速）")
 do {
-    let low = FanEngine.decide(mode: .percent(10), maxTempC: 92, range: fr, policy: fp)
-    if case .setTarget(let rpm) = low {
-        let floor80 = 1350 + 0.80 * (5350 - 1350)
-        check(rpm >= floor80 - 0.5,
-              "92°C 时 10% 被安全下限顶到 ≥80%（得到 \(Int(rpm))，下限 \(Int(floor80))）")
-    } else { check(false, "92°C + 10% 应当接管", "得到 \(low)") }
-}
-do {
-    let low = FanEngine.decide(mode: .percent(10), maxTempC: 60, range: fr, policy: fp)
-    if case .setTarget(let rpm) = low {
+    if case .setTarget(let rpm) = dec(.percent(10), 92) {
+        let floor80 = 1350 + 0.80 * 4000
+        check(rpm >= floor80 - 0.5, "92°C 时 10% 被顶到 ≥80%（得到 \(Int(rpm))）")
+    } else { check(false, "92°C + 10% 应当接管") }
+    if case .setTarget(let rpm) = dec(.percent(10), 60) {
         check(abs(rpm - (1350 + 0.10 * 4000)) < 0.5, "60°C 时 10% 不被顶高（低温不干预）")
     } else { check(false, "60°C + 10% 应当接管") }
 }
 eq(FanEngine.safetyFloor(1400, maxTempC: nil, range: fr, policy: fp), 1400,
-   "温度读不到时不施加下限（但也不会低于 Mn）")
-eq(FanEngine.safetyFloor(100, maxTempC: 60, range: fr, policy: fp), 1350,
-   "请求低于 Mn → 夹到 Mn")
-eq(FanEngine.safetyFloor(99999, maxTempC: 60, range: fr, policy: fp), 5350,
-   "请求高于 Mx → 夹到 Mx")
+   "温度读不到时不施加下限")
+eq(FanEngine.safetyFloor(100, maxTempC: 60, range: fr, policy: fp), 1350, "请求低于 Mn → 夹到 Mn")
+eq(FanEngine.safetyFloor(99999, maxTempC: 60, range: fr, policy: fp), 5350, "请求高于 Mx → 夹到 Mx")
 
-// 曲线
-eq(FanEngine.decide(mode: .curve, maxTempC: 60, range: fr, policy: fp),
-   .releaseToFirmware, "曲线：低于起点 → 交还固件（不比固件更保守）")
-eq(FanEngine.decide(mode: .curve, maxTempC: 95, range: fr, policy: fp),
-   .setTarget(5350), "曲线：到达终点 → 全速")
-eq(FanEngine.decide(mode: .curve, maxTempC: nil, range: fr, policy: fp),
-   .releaseToFirmware, "曲线：读不到温度 → 交还固件")
+section("风扇：分档 + 迟滞 + 最短停留")
+// balanced = 60→30% 70→45% 78→60% 85→75% 92→90% 97→100%
+eq(stepOf(.curve, 55), -1, "低于第一档 → 不接管")
+eq(dec(.curve, 55), .releaseToFirmware, "低于第一档 → 交还固件")
+eq(stepOf(.curve, 60), 0, "正好到第一档阈值 → 进第 0 档")
+eq(stepOf(.curve, 77.9), 1, "77.9°C → 第 1 档（70 档）")
+eq(stepOf(.curve, 78), 2, "78°C → 第 2 档")
+eq(stepOf(.curve, 200), 5, "极高温 → 最高档")
+eq(dec(.curve, nil), .releaseToFirmware, "读不到温度 → 交还固件")
+
+// 升档立即
+eq(stepOf(.curve, 92, FanEngine.StepState(index: 0, dwellSeconds: 0)), 4,
+   "升档立即生效（第 0 档 → 第 4 档，不需要等停留时间）")
+
+// 降档要迟滞 + 停留时间
 do {
-    let mid = FanEngine.decide(mode: .curve, maxTempC: 82.5, range: fr, policy: fp)
-    if case .setTarget(let rpm) = mid {
-        check(rpm > 1350 && rpm < 5350, "曲线中点在量程内爬升（得到 \(Int(rpm)) RPM）")
-    } else { check(false, "曲线中点应当接管") }
+    let inStep3 = FanEngine.StepState(index: 3, dwellSeconds: 999)   // 85→75% 档
+    eq(stepOf(.curve, 84, inStep3), 3, "降到 84°C 但未过迟滞（85−4=81）→ 保持原档")
+    eq(stepOf(.curve, 81, inStep3), 2, "正好 81°C（阈值−迟滞）→ 降一档（边界含等号）")
+    eq(stepOf(.curve, 81.1, inStep3), 3, "81.1°C 仍在迟滞区内 → 保持原档")
+    let fresh = FanEngine.StepState(index: 3, dwellSeconds: 5)
+    eq(stepOf(.curve, 60, fresh), 3, "温度大跌但停留不足 30s → 不降档")
+    eq(stepOf(.curve, 60, FanEngine.StepState(index: 3, dwellSeconds: 31)), 2,
+       "停留够久 → 一次只降一档（3 → 2，不会直接掉到 0）")
+    eq(stepOf(.curve, 40, FanEngine.StepState(index: 0, dwellSeconds: 99)), -1,
+       "从第 0 档继续降 → 交还固件")
+}
+// 停留时间在同档时要累计、换档时要清零
+do {
+    let r1 = FanEngine.decide(mode: .curve, maxTempC: 86, range: fr, policy: fp,
+                              state: FanEngine.StepState(index: 3, dwellSeconds: 12))
+    eq(r1.state.dwellSeconds, 12, "同档位 → 停留时间保留")
+    let r2 = FanEngine.decide(mode: .curve, maxTempC: 93, range: fr, policy: fp,
+                              state: FanEngine.StepState(index: 3, dwellSeconds: 12))
+    eq(r2.state.dwellSeconds, 0, "换档位 → 停留时间清零")
 }
 
 section("风扇：策略校验与编解码")
-eq(FanPolicy(curveStartC: 10).validated().curveStartC, 50, "曲线起点下限夹紧")
-eq(FanPolicy(curveStartC: 200).validated().curveStartC, 90, "曲线起点上限夹紧")
+eq(FanPolicy(hysteresisC: 0).validated().hysteresisC, 1, "迟滞下限夹紧")
+eq(FanPolicy(hysteresisC: 99).validated().hysteresisC, 15, "迟滞上限夹紧")
+eq(FanPolicy(minDwellSeconds: 1).validated().minDwellSeconds, 5, "停留时间下限夹紧")
 eq(FanPolicy(criticalC: 999).validated().criticalC, 110, "临界温度上限夹紧")
-eq(FanPolicy(curveStartC: 80, curveFullC: 70).validated().curveFullC, 90,
-   "终点不高于起点时自动修正")
-eq(FanPolicy(curveStartC: Double.nan).validated().curveStartC, 70, "nan → 回落默认值")
+eq(FanPolicy(hysteresisC: Double.nan).validated().hysteresisC, 4, "nan → 回落默认值")
+do {   // 档位清洗：乱序、重复、百分比倒挂
+    let messy = FanPolicy(steps: [FanStep(upAtC: 90, percent: 80),
+                                  FanStep(upAtC: 60, percent: 30),
+                                  FanStep(upAtC: 90.2, percent: 85),   // 太近，丢弃
+                                  FanStep(upAtC: 95, percent: 50)])    // 倒挂，丢弃
+        .validated()
+    // 60→30 保留；90→80 保留；90.2→85 与前档只差 0.2°C 被丢；95→50 百分比倒挂被丢
+    eq(messy.steps.count, 2, "档位清洗：太近的与倒挂的都被丢弃，剩 2 档")
+    eq(messy.steps[0].upAtC, 60, "按温度升序排列")
+    check(zip(messy.steps, messy.steps.dropFirst()).allSatisfy { $0.percent <= $1.percent },
+          "百分比单调不降")
+    eq(FanPolicy(steps: []).validated().steps.count, FanPolicy.balanced.count,
+       "空档位 → 回落默认档位表")
+}
 eq(FanRequest(mode: .percent(500)).validated().mode, FanMode.percent(100), "百分比上限夹紧")
 eq(FanRequest(mode: .percent(-20)).validated().mode, FanMode.percent(0), "百分比下限夹紧")
 do {
     for m in [FanMode.auto, .full, .curve, .percent(42)] {
-        let back = try JSON.decode(FanMode.self, try JSON.encode(m))
-        check(back == m, "FanMode round-trip: \(m.label)")
+        check(try JSON.decode(FanMode.self, try JSON.encode(m)) == m,
+              "FanMode round-trip: \(m.label)")
     }
-    let p = FanPolicy(curveStartC: 72, curveFullC: 93, criticalC: 99)
+    let p = FanPolicy(steps: FanPolicy.quiet, hysteresisC: 6, minDwellSeconds: 45, criticalC: 99)
     check(try JSON.decode(FanPolicy.self, try JSON.encode(p)) == p, "FanPolicy round-trip")
 } catch { check(false, "风扇编解码", "\(error)") }
 
