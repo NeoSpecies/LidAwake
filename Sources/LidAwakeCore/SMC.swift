@@ -321,7 +321,9 @@ public final class FanController {
     private func takeOver(_ rpm: Double) -> Bool {
         let count = sensors.fanCount
         if !hasTakenOver {
-            originalTargets = sensors.targetRPM()
+            // 同理：只记录合法读数，0 一律丢弃
+            let mn = sensors.range().minRPM
+            originalTargets = sensors.targetRPM().filter { $0 >= mn && mn > 0 }
             hasTakenOver = true
         }
         var ok = true
@@ -339,8 +341,13 @@ public final class FanController {
     public func release() -> Bool {
         guard isAvailable else { return true }
         var ok = true
+        let minRPM = sensors.range().minRPM
         for i in 0..<sensors.fanCount {
-            if i < originalTargets.count {
+            // 只写回**合法**的原始目标值。
+            // 接管瞬间 SMC 偶尔会返回 0（md 切换时的读取窗口），
+            // 如果把这个 0 记下来又原样写回去，就等于命令风扇停转。
+            // 拿不到可信的原值时宁可只交还控制权，让固件自己决定。
+            if i < originalTargets.count, originalTargets[i] >= minRPM, minRPM > 0 {
                 _ = smc.writeFloat("F\(i)Tg", originalTargets[i])
             }
             if !smc.writeUInt8("F\(i)md", 0) { ok = false }

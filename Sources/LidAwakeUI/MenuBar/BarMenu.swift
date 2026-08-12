@@ -7,23 +7,35 @@ import LidAwakeCore
 /// - NSMenu 负责定位、点外面消失、ESC、贴屏幕边、多屏 —— 这些自己写容易出错
 /// - 网格内容用自定义视图 + 显式 frame，几何完全可控（上一版栽在 Auto Layout 上）
 ///
-/// 面板只做两件事：**展示菜单栏图标**和**点它**。折叠开关不在这里 ——
-/// 那是设置项，放在 LidAwake 主菜单的「菜单栏折叠」子菜单里。
+/// 面板是**左键点状态栏图标的默认落点**，承载三块内容：
+/// 合盖续跑开关 · 菜单栏图标网格 · 风扇控制与系统状态。
+/// 其余配置项走右键菜单 —— 配置归配置，面板只负责常用操作。
 final class BarMenuController: NSObject, NSMenuDelegate {
 
     private let scanner = StatusItemScanner()
     private var gridView: GridPanelView?
+
+    var onToggleFold: (() -> Void)?
+    var foldStateProvider: (() -> FoldState)?
+    var statusProvider: (() -> StatusDTO?)?
+    var onToggleAwake: ((Mode) -> Void)?
+    var onSetFan: ((FanMode) -> Void)?
 
     func present(from button: NSStatusBarButton?) {
         let items = Permissions.accessibilityGranted ? scanner.scan() : []
         let grid = GridPanelView(
             items: sortedForDisplay(items),
             accessibilityGranted: Permissions.accessibilityGranted,
+            status: statusProvider?() ,
+            foldState: foldStateProvider?() ?? .expanded,
             onSelect: { [weak self] item in self?.activate(item) },
             onGrantAccessibility: {
                 Permissions.requestAccessibility()
                 Permissions.openAccessibilitySettings()
-            })
+            },
+            onToggleAwake: { [weak self] m in self?.onToggleAwake?(m) },
+            onSetFan: { [weak self] m in self?.onSetFan?(m) },
+            onToggleFold: { [weak self] in self?.onToggleFold?() })
         gridView = grid
 
         let holder = NSMenuItem()
@@ -51,7 +63,11 @@ final class BarMenuController: NSObject, NSMenuDelegate {
         let items = Permissions.accessibilityGranted ? scanner.scan() : []
         let grid = GridPanelView(items: sortedForDisplay(items),
                                  accessibilityGranted: Permissions.accessibilityGranted,
-                                 onSelect: { _ in }, onGrantAccessibility: {})
+                                 status: statusProvider?(),
+                                 foldState: foldStateProvider?() ?? .expanded,
+                                 onSelect: { _ in }, onGrantAccessibility: {},
+                                 onToggleAwake: { _ in }, onSetFan: { _ in },
+                                 onToggleFold: {})
         var out = [grid.geometryDump()]
         if !items.isEmpty {
             out.append("磁贴内容：")

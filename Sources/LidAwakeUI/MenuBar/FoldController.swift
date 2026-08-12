@@ -1,101 +1,88 @@
 import AppKit
 import LidAwakeCore
 
-/// 菜单栏折叠。
+/// 菜单栏折叠 —— **复用 App 自己那一个状态栏图标**，不额外占格子。
 ///
 /// 原理（不需要任何权限）：菜单栏项从右往左排，塞不下的从左端被裁掉。
-/// 我们自己插一个可变宽度的"隔断"项 —— 把它撑到超过屏幕宽度，它**左边**的
-/// 所有图标就被顶出可见区域；把它收窄，那些图标就回来。
+/// 把我们自己这一项撑到超过屏幕宽度，它**左边**的所有图标就被顶出可见区；收窄就回来。
 ///
-/// 边界位置由用户 ⌘ 拖动隔断项自己决定，位置由 autosaveName 持久化。
+/// 关键细节：项被撑宽后，它的右边缘仍然贴着控制中心，可见的是**最右侧那一小段**。
+/// 所以图标必须钉在右边缘（`autoresizingMask = .minXMargin`，弹性左边距），
+/// 否则默认居中会把图标画到屏幕外去。
 final class FoldController {
 
-    /// 撑开时的宽度。比任何显示器都宽即可。
-    private let collapsedWidth: CGFloat = 10_000
-    /// 展开时留一点宽度，好让用户能 ⌘ 拖动它调整边界
-    private let expandedWidth: CGFloat = 22
+    private let iconSize: CGFloat = 18
+    private let iconInset: CGFloat = 6
 
-    private let spacer: NSStatusItem
-    private let toggle: NSStatusItem
+    private weak var statusItem: NSStatusItem?
+    private let iconView = NSImageView()
 
     private(set) var state: FoldState {
         didSet {
             UserDefaults.standard.set(state.rawValue, forKey: Keys.state)
-            applyState()
+            apply()
             onChange?(state)
         }
     }
 
-    var onOpenPanel: (() -> Void)?
     var onChange: ((FoldState) -> Void)?
+    /// 展开态下由 MenuController 负责画图标与倒计时，这里回调它重画
+    var onRestoreNormalAppearance: (() -> Void)?
 
-    private enum Keys {
-        static let state = "menubar.foldState"
-        static let enabled = "menubar.foldEnabled"
-    }
+    private enum Keys { static let state = "menubar.foldState" }
 
-    static var isFeatureEnabled: Bool {
-        get {
-            // 默认关闭：这个功能会往用户菜单栏里加两个图标，必须显式开启
-            UserDefaults.standard.object(forKey: Keys.enabled) as? Bool ?? false
-        }
-        set { UserDefaults.standard.set(newValue, forKey: Keys.enabled) }
-    }
-
-    init() {
-        spacer = NSStatusBar.system.statusItem(withLength: expandedWidth)
-        toggle = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    init(statusItem: NSStatusItem) {
+        self.statusItem = statusItem
         state = FoldState(rawValue: UserDefaults.standard.string(forKey: Keys.state) ?? "")
             ?? .expanded
 
-        // 隔断项：⌘ 拖它决定"哪些图标属于被折叠的那一组"
-        spacer.button?.image = Symbols.image(["line.3.vertical", "ellipsis"],
-                                             description: "折叠边界")
-        spacer.button?.imagePosition = .imageOnly
-        // 纯边界标记：不接任何动作。面板只有「〉」一个入口，避免两个图标行为重复。
-        spacer.button?.toolTip = "LidAwake 折叠边界\n按住 ⌘ 拖动可调整位置\n它左边的图标属于被折叠的那一组"
-        spacer.autosaveName = "com.cogito.LidAwake.foldSpacer"
-
-        toggle.button?.target = self
-        toggle.button?.action = #selector(toggleClicked)
-        toggle.autosaveName = "com.cogito.LidAwake.foldToggle"
-
-        applyState()
-    }
-
-    deinit {
-        NSStatusBar.system.removeStatusItem(spacer)
-        NSStatusBar.system.removeStatusItem(toggle)
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.isHidden = true
+        // 弹性左边距 = 钉右边缘。用 springs-and-struts 而不是 Auto Layout：
+        // 状态栏按钮的尺寸由系统改，约束链在这里更容易出意外。
+        iconView.autoresizingMask = [.minXMargin]
+        if let button = statusItem.button {
+            iconView.frame = NSRect(x: button.bounds.width - iconSize - iconInset,
+                                    y: (button.bounds.height - iconSize) / 2,
+                                    width: iconSize, height: iconSize)
+            button.addSubview(iconView)
+        }
+        apply()
     }
 
     func toggle(_ newState: FoldState? = nil) {
         state = newState ?? state.toggled
     }
 
-    private func applyState() {
+    /// 折叠图标（折叠态显示在右边缘的那个）
+    func setFoldedIcon(_ image: NSImage?) {
+        iconView.image = image
+        iconView.image?.isTemplate = true
+    }
+
+    private func apply() {
+        guard let statusItem, let button = statusItem.button else { return }
         switch state {
         case .folded:
-            spacer.length = collapsedWidth
-            spacer.button?.image = nil
-            toggle.button?.image = Symbols.image(["square.grid.2x2.fill", "square.grid.2x2"],
-                                                 description: "菜单栏图标面板")
-            toggle.button?.toolTip = "菜单栏图标已折叠\n单击打开面板"
+            // 折叠态：自己变得极宽把左边图标顶出去；只显示钉在右边缘的图标
+            button.image = nil
+            button.title = ""
+            iconView.isHidden = false
+            // 必须夹在 10000 以内：超了 NSStatusItem 会抛异常直接崩溃
+            statusItem.length = MenuBarLayout.foldedLength(iconSize: iconSize, inset: iconInset)
+            DispatchQueue.main.async { [weak self] in self?.pinIconToTrailingEdge() }
         case .expanded:
-            spacer.length = expandedWidth
-            spacer.button?.image = Symbols.image(["line.3.vertical", "ellipsis"],
-                                                 description: "折叠边界")
-            toggle.button?.image = Symbols.image(["square.grid.2x2", "square.grid.2x2.fill"],
-                                                 description: "菜单栏图标面板")
-            toggle.button?.toolTip = "单击打开面板（列出全部菜单栏图标）"
+            iconView.isHidden = true
+            statusItem.length = NSStatusItem.variableLength
+            onRestoreNormalAppearance?()
         }
     }
 
-    /// 这个按钮只做一件事：打开面板。
-    /// 折叠/展开是设置项，放在 LidAwake 主菜单里 —— 一个图标一个职责。
-    @objc private func toggleClicked() {
-        onOpenPanel?()
+    /// 极宽状态下 autoresizing 有时来不及，显式再钉一次
+    private func pinIconToTrailingEdge() {
+        guard let button = statusItem?.button else { return }
+        iconView.frame = NSRect(x: button.bounds.width - iconSize - iconInset,
+                                y: (button.bounds.height - iconSize) / 2,
+                                width: iconSize, height: iconSize)
     }
-
-    /// 菜单要贴着这个按钮下方弹出
-    var anchorButton: NSStatusBarButton? { toggle.button }
 }

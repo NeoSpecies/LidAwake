@@ -23,8 +23,13 @@ final class GridPanelView: NSView {
     }
 
     private let items: [MenuBarItemInfo]
+    private let status: StatusDTO?
+    private let foldState: FoldState
     private let onSelect: (MenuBarItemInfo) -> Void
     private let onGrantAccessibility: () -> Void
+    private let onToggleAwake: (Mode) -> Void
+    private let onSetFan: (FanMode) -> Void
+    private let onToggleFold: () -> Void
 
     private var statsValueLabels: [NSTextField] = []
     private var statsCaptionLabels: [NSTextField] = []
@@ -36,18 +41,35 @@ final class GridPanelView: NSView {
 
     init(items: [MenuBarItemInfo],
          accessibilityGranted: Bool,
+         status: StatusDTO?,
+         foldState: FoldState,
          onSelect: @escaping (MenuBarItemInfo) -> Void,
-         onGrantAccessibility: @escaping () -> Void) {
+         onGrantAccessibility: @escaping () -> Void,
+         onToggleAwake: @escaping (Mode) -> Void,
+         onSetFan: @escaping (FanMode) -> Void,
+         onToggleFold: @escaping () -> Void) {
         self.items = items
+        self.status = status
+        self.foldState = foldState
         self.onSelect = onSelect
         self.onGrantAccessibility = onGrantAccessibility
+        self.onToggleAwake = onToggleAwake
+        self.onSetFan = onSetFan
+        self.onToggleFold = onToggleFold
         super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: 100))
 
-        var y = pad                                  // 从底部往上排（AppKit 原点在左下）
+        // 从底部往上排（AppKit 原点在左下）
+        var y = pad
         y = layoutStats(bottomY: y)
         y += sectionGap
         y = layoutSeparator(bottomY: y)
         y += sectionGap
+        if let fan = status?.fan, fan.supported {
+            y = layoutFan(bottomY: y, fan: fan)
+            y += sectionGap
+            y = layoutSeparator(bottomY: y)
+            y += sectionGap
+        }
 
         if accessibilityGranted {
             y = layoutTiles(bottomY: y)
@@ -56,6 +78,10 @@ final class GridPanelView: NSView {
         }
         y += 6
         y = layoutHeader(bottomY: y, accessibilityGranted: accessibilityGranted)
+        y += sectionGap
+        y = layoutSeparator(bottomY: y)
+        y += sectionGap
+        y = layoutAwake(bottomY: y)
         y += pad
 
         setFrameSize(NSSize(width: Self.width, height: y))
@@ -65,6 +91,101 @@ final class GridPanelView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     // MARK: 各区块（全部返回"排完之后的顶部 y"）
+
+    /// 顶部：合盖续跑（App 的主功能，必须一键可达）
+    private func layoutAwake(bottomY: CGFloat) -> CGFloat {
+        let active = status?.active ?? false
+        let w = Self.width - pad * 2
+
+        var buttons: [(String, Mode)] = []
+        if active {
+            buttons = [("关闭", .off)]
+        } else {
+            buttons = [("开启", .indefinite),
+                       ("2 小时", .until(Date().addingTimeInterval(7200))),
+                       ("8 小时", .until(Date().addingTimeInterval(28800)))]
+        }
+        let bw = (w - CGFloat(buttons.count - 1) * 6) / CGFloat(buttons.count)
+        for (i, item) in buttons.enumerated() {
+            let b = ClosureButton(title: item.0) { [weak self] in
+                self?.dismissMenu()
+                self?.onToggleAwake(item.1)
+            }
+            b.bezelStyle = .rounded
+            b.controlSize = .regular
+            b.frame = NSRect(x: pad + CGFloat(i) * (bw + 6), y: bottomY, width: bw, height: 26)
+            addSubview(b)
+        }
+
+        let dot = NSView(frame: NSRect(x: pad, y: bottomY + 36, width: 8, height: 8))
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 4
+        dot.layer?.backgroundColor = (active ? NSColor.systemGreen : NSColor.tertiaryLabelColor).cgColor
+        addSubview(dot)
+
+        var text = "合盖续跑 · 已关闭"
+        if active {
+            text = "合盖续跑 · 已开启"
+            if let r = status?.remainingSeconds { text += "，剩余 \(Format.hms(r))" }
+        }
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 12, weight: .semibold)
+        label.frame = NSRect(x: pad + 14, y: bottomY + 32, width: w - 14, height: 16)
+        addSubview(label)
+
+        geometryLog.append("合盖续跑区：\(buttons.count) 个按钮，单个宽 \(Int(bw))")
+        return bottomY + 54
+    }
+
+    /// 风扇：状态 + 一排快捷档位
+    private func layoutFan(bottomY: CGFloat, fan: FanStatus) -> CGFloat {
+        let w = Self.width - pad * 2
+        let presets: [(String, FanMode)] = [
+            ("自动", .auto), ("按温度", .curve), ("60%", .percent(60)),
+            ("80%", .percent(80)), ("全速", .full),
+        ]
+        let bw = (w - CGFloat(presets.count - 1) * 5) / CGFloat(presets.count)
+        for (i, item) in presets.enumerated() {
+            let b = ClosureButton(title: item.0) { [weak self] in
+                self?.dismissMenu()
+                self?.onSetFan(item.1)
+            }
+            b.bezelStyle = .rounded
+            b.controlSize = .small
+            b.font = .systemFont(ofSize: 11)
+            // 当前档位高亮
+            if fan.mode == item.1 {
+                b.bezelColor = NSColor.controlAccentColor
+                b.contentTintColor = .white
+            }
+            b.frame = NSRect(x: pad + CGFloat(i) * (bw + 5), y: bottomY, width: bw, height: 22)
+            addSubview(b)
+        }
+
+        let rpm = fan.actualRPM.map { String(format: "%.0f", $0) }.joined(separator: " / ")
+        var line = "风扇 · \(fan.mode.chinese) · \(rpm) RPM"
+        if let t = fan.maxTempC { line += String(format: " · 最高温 %.0f°C", t) }
+        let label = NSTextField(labelWithString: line)
+        label.font = .systemFont(ofSize: 12, weight: .semibold)
+        label.frame = NSRect(x: pad, y: bottomY + 28, width: w, height: 16)
+        addSubview(label)
+
+        // 转速占量程的比例条
+        let track = NSView(frame: NSRect(x: pad, y: bottomY + 26, width: w, height: 2))
+        track.wantsLayer = true
+        track.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        addSubview(track)
+        let fillW = max(2, w * CGFloat(fan.loadFraction))
+        let fill = NSView(frame: NSRect(x: pad, y: bottomY + 26, width: fillW, height: 2))
+        fill.wantsLayer = true
+        fill.layer?.backgroundColor = (fan.loadFraction > 0.8 ? NSColor.systemOrange
+                                       : NSColor.controlAccentColor).cgColor
+        addSubview(fill)
+
+        geometryLog.append("风扇区：\(presets.count) 档按钮，单个宽 \(Int(bw))，"
+                           + "转速条 \(Int(fillW))/\(Int(w))")
+        return bottomY + 46
+    }
 
     private func layoutStats(bottomY: CGFloat) -> CGFloat {
         let colWidth = (Self.width - pad * 2) / 4

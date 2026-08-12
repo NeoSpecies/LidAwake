@@ -62,6 +62,20 @@ public struct MenuBarItemInfo: Sendable, Equatable, Identifiable {
 
 public enum MenuBarLayout {
 
+    /// macOS 对 `NSStatusItem.length` 的硬上限。
+    /// 超过就抛 `NSInvalidArgumentException` 直接崩溃 ——
+    /// 实测："attempt to set length of status bar item to 10030.00 (maximum is 10000)"
+    public static let maxStatusItemLength: CGFloat = 10_000
+
+    /// 折叠态该把自己撑到多宽。必须夹在上限内，否则崩溃。
+    /// - Parameters:
+    ///   - iconSize: 图标边长
+    ///   - inset: 图标两侧留白
+    public static func foldedLength(iconSize: CGFloat, inset: CGFloat) -> CGFloat {
+        min(maxStatusItemLength, iconSize + inset * 2 + maxStatusItemLength)
+    }
+
+
     /// 判断一个项是否在可见区域内。
     ///
     /// 菜单栏项从右往左排，塞不下的从**左端**被裁掉。所以只要项的左边缘

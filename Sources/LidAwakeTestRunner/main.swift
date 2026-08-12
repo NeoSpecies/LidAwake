@@ -401,6 +401,14 @@ check(!MenuBarLayout.shouldScan(bundleID: "com.apple.WebKit.GPU"), "WebKit XPC �
 check(!MenuBarLayout.shouldScan(bundleID: "com.google.Chrome.helper"), ".helper 结尾不扫描")
 check(MenuBarLayout.shouldScan(bundleID: "com.todesk.mac"), "普通第三方 App 要扫描")
 
+section("菜单栏折叠：状态栏项宽度上限")
+// 实测崩溃："attempt to set length of status bar item to 10030.00 (maximum is 10000)"
+eq(MenuBarLayout.foldedLength(iconSize: 18, inset: 6), 10000, "折叠宽度夹在 10000 上限内")
+eq(MenuBarLayout.foldedLength(iconSize: 0, inset: 0), 10000, "零图标也不超上限")
+eq(MenuBarLayout.foldedLength(iconSize: 999, inset: 999), 10000, "超大图标同样夹紧")
+check(MenuBarLayout.foldedLength(iconSize: 18, inset: 6) <= MenuBarLayout.maxStatusItemLength,
+      "折叠宽度永远 ≤ 系统上限（否则 NSStatusItem 抛异常崩溃）")
+
 section("菜单栏项：状态文字提取")
 eq(mkItem("A", x: 0, onScreen: true, help: "已连接").statusText, "已连接", "优先取 tooltip")
 eq(mkItem("A", x: 0, onScreen: true, title: "3").statusText, "3", "没有 tooltip 时取标题")

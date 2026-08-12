@@ -29,8 +29,12 @@ final class MenuController: NSObject, NSMenuDelegate {
     override init() {
         super.init()
         menu.delegate = self
-        statusItem.menu = menu
+        // 不把 menu 直接挂到 statusItem 上 —— 那样左键会弹菜单。
+        // 我们要的是：**左键出面板，右键出菜单**，所以自己路由点击。
         statusItem.button?.imagePosition = .imageLeading
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(statusItemClicked)
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
         client.onStateChange = { [weak self] s in
             DispatchQueue.main.async {
@@ -55,8 +59,31 @@ final class MenuController: NSObject, NSMenuDelegate {
             DispatchQueue.main.async { self?.applyStateToUI() }
         }
 
+        foldFeature.statusProvider = { [weak self] in self?.status }
+        foldFeature.onToggleAwake = { [weak self] mode in self?.setMode(mode) }
+        foldFeature.onSetFan = { [weak self] mode in self?.setFan(mode) }
+        foldFeature.attach(to: statusItem) { [weak self] in self?.updateAppearance() }
+
         refresh()
         applyStateToUI()
+    }
+
+    /// 左键 → 面板（默认动作，装这个 App 最常用的就是它）
+    /// 右键 / ⌃ 点击 → 菜单（全部设置项）
+    @objc private func statusItemClicked() {
+        let event = NSApp.currentEvent
+        let isRight = event?.type == .rightMouseUp
+            || (event?.modifierFlags.contains(.control) ?? false)
+        if isRight {
+            rebuild(menu)
+            // 标准做法：临时挂上 menu 让系统弹，弹完立刻摘掉，
+            // 否则下次左键会被系统直接弹菜单而走不到我们的路由。
+            statusItem.menu = menu
+            statusItem.button?.performClick(nil)
+            statusItem.menu = nil
+        } else {
+            foldFeature.openPanel()
+        }
     }
 
     /// 状态变化后统一走这里：更新图标，并且如果菜单正开着就就地重建条目
@@ -109,6 +136,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         } else {
             names = ["infinity.circle.fill", "infinity", "bolt.circle.fill"]
         }
+        guard foldFeature.foldState == .expanded else { return }   // 折叠态外观由 FoldController 管
         let image = Symbols.image(names, description: "LidAwake")
         statusItem.button?.image = image
 
@@ -339,7 +367,6 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     private func rebuild(_ menu: NSMenu) {
         menu.removeAllItems()
-        let foldEnabled = foldFeature.isEnabled
 
         // ── 状态区
         switch (isActive, currentMode.deadline) {
@@ -488,27 +515,14 @@ final class MenuController: NSObject, NSMenuDelegate {
             [weak self] in self?.installService()
         }
         menu.addSubmenu("菜单栏折叠") { sub in
-            sub.addAction(foldEnabled ? "打开面板（\(self.foldFeature.hotKeyName)）" : "打开面板",
-                          state: nil) { [weak self] in self?.foldFeature.openPanel() }
-            if foldEnabled {
-                // 折叠是设置项，只在这里出现；面板本身只负责展示与跳转
-                sub.addAction(self.foldFeature.foldState == .folded
-                              ? "展开菜单栏图标（当前已折叠）" : "折叠菜单栏图标") {
-                    [weak self] in self?.foldFeature.toggleFold()
-                }
+            sub.addAction(self.foldFeature.foldState == .folded
+                          ? "展开菜单栏图标（当前已折叠）" : "折叠左侧菜单栏图标") {
+                [weak self] in self?.foldFeature.toggleFold()
             }
+            sub.addDisabled("折叠会把本图标左边的图标顶出可见区")
             sub.addItem(.separator())
-            sub.addAction("启用菜单栏折叠", state: foldEnabled ? .on : .off) { [weak self] in
-                guard let self else { return }
-                let turningOn = !self.foldFeature.isEnabled
-                self.foldFeature.setEnabled(turningOn)
-                if turningOn {
-                    Alerts.show("已启用菜单栏折叠",
-                                "菜单栏里多了两个图标：\n\n"
-                                + "• 「〉」切换按钮 —— 单击折叠/展开，右键打开面板\n"
-                                + "• 「⋮」折叠边界 —— 按住 ⌘ 拖动它，它左边的图标属于被折叠的那一组\n\n"
-                                + "快捷键 \(self.foldFeature.hotKeyName) 可随时唤起面板。")
-                }
+            sub.addAction("打开面板（\(self.foldFeature.hotKeyName)）") {
+                [weak self] in self?.foldFeature.openPanel()
             }
             sub.addAction("全局快捷键 \(self.foldFeature.hotKeyName)",
                           state: HotKey.isEnabled ? .on : .off) { [weak self] in
@@ -540,6 +554,8 @@ final class MenuController: NSObject, NSMenuDelegate {
                         + "机制：IOPMAssertion（断言层）+ SleepDisabled（系统层，需一次授权）。\n"
                         + "命令行：lidawake on --for 2h / lidawake off / lidawake doctor")
         }
+        menu.addItem(.separator())
+        menu.addDisabled("左键点图标 = 打开面板 · 右键 = 本菜单")
         menu.addAction("退出", key: "q") { NSApp.terminate(nil) }
     }
 }

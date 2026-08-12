@@ -43,15 +43,18 @@ enum MenuBarSelfTest {
         emit("  屏幕录制（真实图标预览，可选）: \(Permissions.screenRecordingGranted ? "已授权" : "未授权（不影响核心功能）")")
         emit("  真实图标预览开关: \(IconCapture.isRequested ? "已勾选" : "关闭")")
 
-        emit("\n── 折叠机制（无需任何权限）")
-        let fold = FoldController()
+        emit("\n── 折叠机制（无需任何权限，复用同一个状态栏图标）")
+        let probeItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let fold = FoldController(statusItem: probeItem)
         emit("  初始状态: \(fold.state.rawValue)")
         fold.toggle(.folded)
-        emit("  切到 folded  → 状态 \(fold.state.rawValue)")
+        emit("  切到 folded  → 状态 \(fold.state.rawValue)  宽度 \(Int(probeItem.length))")
         fold.toggle(.expanded)
-        emit("  切到 expanded → 状态 \(fold.state.rawValue)")
-        emit("  两个 status item 创建: ✅（未崩溃，且状态可切换）")
+        emit("  切到 expanded → 状态 \(fold.state.rawValue)  宽度 \(Int(probeItem.length))"
+             + "（-1 = variableLength）")
+        emit("  状态栏图标占用: 1 个（折叠复用同一项，不额外占格子）")
         emit("  说明: 图标被顶出屏幕的视觉效果需人眼确认，程序无法自证")
+        NSStatusBar.system.removeStatusItem(probeItem)
 
         emit("\n── 系统实时状态（无需任何权限）")
         let s1 = SystemStats.snapshot()
@@ -65,9 +68,17 @@ enum MenuBarSelfTest {
         emit("  磁盘   : 可用 \(Format.bytes(disk.free)) / \(Format.bytes(disk.total))  IO ↓\(Format.rate(rates.diskReadPerSec)) ↑\(Format.rate(rates.diskWritePerSec))")
         emit("  网络   : \(SystemStats.primaryInterface() ?? "未连接")  ↓\(Format.rate(rates.netRxPerSec)) ↑\(Format.rate(rates.netTxPerSec))")
 
-        emit("\n── 面板菜单结构（不弹出，直接导出）")
-        let feature = FoldFeature()
-        emit(feature.debugMenuDump().split(separator: "\n").map { "  " + $0 }.joined(separator: "\n"))
+        emit("\n── 面板结构（不弹出，直接导出几何）")
+        let previewFan = FanStatus(supported: true, fanCount: 2, mode: .auto,
+                                   actualRPM: [2100, 2300], minRPM: 1350, maxRPM: 5349,
+                                   maxTempC: 78)
+        let previewStatus = StatusDTO(fan: previewFan)
+        let preview = GridPanelView(items: [], accessibilityGranted: false,
+                                    status: previewStatus, foldState: .expanded,
+                                    onSelect: { _ in }, onGrantAccessibility: {},
+                                    onToggleAwake: { _ in }, onSetFan: { _ in },
+                                    onToggleFold: {})
+        emit(preview.geometryDump().split(separator: "\n").map { "  " + $0 }.joined(separator: "\n"))
 
         emit("\n── 网格布局验证（用假数据，覆盖未授权时走不到的那条路径）")
         for count in [1, 4, 5, 12] {
@@ -78,7 +89,10 @@ enum MenuBarSelfTest {
                                 isPressable: true, isOnScreen: i % 4 != 0)
             }
             let grid = GridPanelView(items: fake, accessibilityGranted: true,
-                                     onSelect: { _ in }, onGrantAccessibility: {})
+                                     status: StatusDTO(fan: previewFan), foldState: .expanded,
+                                     onSelect: { _ in }, onGrantAccessibility: {},
+                                     onToggleAwake: { _ in }, onSetFan: { _ in },
+                                     onToggleFold: {})
             let dims = grid.geometryDump().split(separator: "\n")
             emit("  \(count) 个磁贴 → \(dims.first ?? "")")
             if let tileLine = dims.first(where: { $0.contains("磁贴") }) {
