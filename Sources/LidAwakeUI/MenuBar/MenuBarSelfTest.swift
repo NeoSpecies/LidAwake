@@ -21,6 +21,54 @@ enum MenuBarSelfTest {
         if outPath != nil { sink.append(line) } else { print(line) }
     }
 
+    /// 把面板渲染成 PNG。渲染**自己的**视图不需要任何权限，
+    /// 因此可以在没有屏幕录制权限的情况下做真正的视觉检查。
+    static func renderPanel(to path: String) {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.prohibited)
+
+        let fan = FanStatus(supported: true, fanCount: 2, mode: .curve,
+                            actualRPM: [3120, 3350], minRPM: 1350, maxRPM: 5349,
+                            targetRPM: 3200, maxTempC: 84.4, hottestSensor: "TCMb")
+        let status = StatusDTO(mode: .until(Date().addingTimeInterval(5400)),
+                               active: true, remainingSeconds: 5400,
+                               mechanism: .full, sleepDisabled: true,
+                               onExternalPower: true, batteryPercent: 85,
+                               fan: fan)
+        let fake: [MenuBarItemInfo] = [
+            ("ToDesk", "已连接", false), ("UniConnect", nil, false), ("飞书", "未读 3 条", false),
+            ("Kaka", "防止屏幕休眠中", true), ("WPS Office", "未登录", true),
+            ("ChatGPT", nil, true), ("Claude", nil, true), ("WorkBuddy", nil, true),
+            ("CC Switch", nil, true), ("微信", "2 条新消息", true),
+        ].enumerated().map { i, t in
+            MenuBarItemInfo(pid: pid_t(1000 + i), appName: t.0, bundleID: "x.\(i)", index: 0,
+                            help: t.1, frame: CGRect(x: 1200, y: 0, width: 24, height: 24),
+                            isPressable: true, isOnScreen: t.2)
+        }
+        let grid = GridPanelView(items: fake, accessibilityGranted: true,
+                                 status: status, foldState: .expanded,
+                                 onSelect: { _ in }, onGrantAccessibility: {},
+                                 onToggleAwake: { _ in }, onSetFan: { _ in },
+                                 onToggleFold: {})
+        // 给一个近似菜单背景的底色，否则透明背景在 PNG 里看不清
+        let canvas = NSView(frame: grid.bounds)
+        canvas.wantsLayer = true
+        canvas.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        canvas.addSubview(grid)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+
+        guard let rep = canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds) else {
+            print("无法创建位图"); exit(1)
+        }
+        canvas.cacheDisplay(in: canvas.bounds, to: rep)
+        guard let data = rep.representation(using: .png, properties: [:]) else {
+            print("PNG 编码失败"); exit(1)
+        }
+        try? data.write(to: URL(fileURLWithPath: path))
+        print("已渲染面板 → \(path)  (\(Int(canvas.bounds.width))×\(Int(canvas.bounds.height)))")
+        print(grid.geometryDump())
+    }
+
     static func run() {
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--out"), i + 1 < args.count {

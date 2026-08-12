@@ -15,7 +15,7 @@ final class GridPanelView: NSView {
     private let tileGap: CGFloat = 8
     private let tileHeight: CGFloat = 84
     private let headerHeight: CGFloat = 20
-    private let statsRowHeight: CGFloat = 34
+    private let statsRowHeight: CGFloat = 46
     private let sectionGap: CGFloat = 10
 
     private var tileWidth: CGFloat {
@@ -99,7 +99,9 @@ final class GridPanelView: NSView {
 
         var buttons: [(String, Mode)] = []
         if active {
-            buttons = [("关闭", .off)]
+            let extend = (status?.remainingSeconds ?? 0) + 3600
+            buttons = [("关闭", .off),
+                       ("再加 1 小时", .until(Date().addingTimeInterval(extend)))]
         } else {
             buttons = [("开启", .indefinite),
                        ("2 小时", .until(Date().addingTimeInterval(7200))),
@@ -187,26 +189,31 @@ final class GridPanelView: NSView {
         return bottomY + 46
     }
 
+    /// 底部系统状态：三行（名称 / 数值 / 细节）。
+    /// 之前是两行且把细节塞进副标题，文字宽度超过列宽会**溢出压到邻格上**
+    /// （实测「内存 · 59.0 GB/128.0」压住了「磁盘 · 可用 1.4 TB」）。
+    /// 现在每格文字都短，并统一开启尾部截断。
     private func layoutStats(bottomY: CGFloat) -> CGFloat {
         let colWidth = (Self.width - pad * 2) / 4
-        for (i, caption) in ["CPU", "内存", "磁盘", "网络"].enumerated() {
-            let x = pad + CGFloat(i) * colWidth
-            let value = NSTextField(labelWithString: "—")
-            value.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
-            value.alignment = .center
-            value.frame = NSRect(x: x, y: bottomY + 14, width: colWidth, height: 17)
-            addSubview(value)
-            statsValueLabels.append(value)
-
-            let cap = NSTextField(labelWithString: caption)
-            cap.font = .systemFont(ofSize: 9, weight: .medium)
-            cap.textColor = .tertiaryLabelColor
-            cap.alignment = .center
-            cap.frame = NSRect(x: x, y: bottomY, width: colWidth, height: 13)
-            addSubview(cap)
-            statsCaptionLabels.append(cap)
+        func label(_ size: CGFloat, _ weight: NSFont.Weight,
+                   _ color: NSColor, _ y: CGFloat, _ col: Int, _ h: CGFloat) -> NSTextField {
+            let f = NSTextField(labelWithString: "")
+            f.font = .systemFont(ofSize: size, weight: weight)
+            f.textColor = color
+            f.alignment = .center
+            f.usesSingleLineMode = true
+            f.lineBreakMode = .byTruncatingTail
+            f.frame = NSRect(x: pad + CGFloat(col) * colWidth, y: y, width: colWidth, height: h)
+            addSubview(f)
+            return f
         }
-        geometryLog.append("系统状态条 4 列，每列宽 \(Int(colWidth))，高 \(Int(statsRowHeight))")
+        for (i, name) in ["CPU", "内存", "磁盘", "网络"].enumerated() {
+            let title = label(9, .medium, .tertiaryLabelColor, bottomY + 32, i, 12)
+            title.stringValue = name
+            statsValueLabels.append(label(14, .medium, .labelColor, bottomY + 13, i, 18))
+            statsCaptionLabels.append(label(9, .regular, .tertiaryLabelColor, bottomY, i, 12))
+        }
+        geometryLog.append("系统状态条 4 列 × 3 行，每列宽 \(Int(colWidth))，高 \(Int(statsRowHeight))")
         refreshStats(rates: nil)
         return bottomY + statsRowHeight
     }
@@ -332,23 +339,24 @@ final class GridPanelView: NSView {
     }
 
     private func refreshStats(rates: StatsRates?) {
-        guard statsValueLabels.count == 4 else { return }
+        guard statsValueLabels.count == 4, statsCaptionLabels.count == 4 else { return }
         let mem = SystemStats.memory()
         let disk = SystemStats.disk()
 
         statsValueLabels[0].stringValue = rates.map { Format.percent($0.cpuBusy) } ?? "—"
-        statsCaptionLabels[0].stringValue = String(format: "CPU · 负载 %.1f", SystemStats.loadAverage())
+        statsCaptionLabels[0].stringValue = String(format: "负载 %.1f", SystemStats.loadAverage())
 
         statsValueLabels[1].stringValue = Format.percent(mem.fraction)
-        statsCaptionLabels[1].stringValue = "内存 · \(Format.bytes(mem.used))/\(Format.bytes(mem.total))"
+        statsCaptionLabels[1].stringValue =
+            "\(Format.bytes(mem.used, decimals: 0))/\(Format.bytes(mem.total, decimals: 0))"
 
-        statsValueLabels[2].stringValue = rates.map {
-            "↓\(Format.rate($0.diskReadPerSec))"
-        } ?? Format.percent(disk.usedFraction)
-        statsCaptionLabels[2].stringValue = "磁盘 · 可用 \(Format.bytes(disk.free))"
+        // 磁盘与网络这两格**始终显示吞吐**，容量放细节行。
+        // 之前"有速率显示吞吐、没速率显示已用百分比"，同一位置两种含义，会看错。
+        statsValueLabels[2].stringValue = rates.map { Format.rate($0.diskReadPerSec) } ?? "—"
+        statsCaptionLabels[2].stringValue = "可用 \(Format.bytes(disk.free))"   // TB 量级保留一位小数
 
-        statsValueLabels[3].stringValue = rates.map { "↓\(Format.rate($0.netRxPerSec))" } ?? "—"
-        statsCaptionLabels[3].stringValue = "网络 · \(SystemStats.primaryInterface() ?? "未连接")"
+        statsValueLabels[3].stringValue = rates.map { Format.rate($0.netRxPerSec) } ?? "—"
+        statsCaptionLabels[3].stringValue = SystemStats.primaryInterface() ?? "未连接"
     }
 
     func geometryDump() -> String { geometryLog.joined(separator: "\n") }
@@ -373,8 +381,15 @@ private final class TileView: NSView {
                                              y: frame.height - iconSize - 10,
                                              width: iconSize, height: iconSize))
         icon.imageScaling = .scaleProportionallyUpOrDown
-        icon.image = NSRunningApplication(processIdentifier: item.pid)?.icon
-        icon.image?.isTemplate = false
+        if let appIcon = NSRunningApplication(processIdentifier: item.pid)?.icon {
+            icon.image = appIcon
+            icon.image?.isTemplate = false
+        } else {
+            // App 可能在扫描与渲染之间退出了 —— 给个占位符，
+            // 否则磁贴上半部分是一片空白，看着像界面坏了
+            icon.image = Symbols.image(["app.dashed", "questionmark.app", "app"], description: "")
+            icon.contentTintColor = .tertiaryLabelColor
+        }
         addSubview(icon)
 
         // 屏幕上放不下 → 右上角一个橙点，一眼看出"这个你点不到"
