@@ -104,7 +104,7 @@ brew install --cask lidawake
 Download the `.pkg` from [Releases](https://github.com/NeoSpecies/LidAwake/releases/latest):
 
 ```bash
-sudo installer -pkg LidAwake-1.0.1.pkg -target /
+sudo installer -pkg LidAwake-1.1.0.pkg -target /
 ```
 
 > The package is currently **unsigned and un-notarized** (no Apple Developer ID yet).
@@ -149,6 +149,24 @@ lidawake on --for 2h --origin build.sh && make -j && lidawake off
 
 Exit codes: `0` ok · `1` usage error · `2` service unavailable · `3` blocked by a safety
 guard (use this to detect "not enough battery").
+
+## Bonus: Menu Bar Fold
+
+Too many menu bar icons, so macOS truncates them and you can't find or click them?
+Hit `⌥⌘B` for a grid panel:
+
+- **🟠 orange dot** = truncated by the system, not visible on screen at all — sorted first
+- **Click a tile** = LidAwake presses the real menu bar item for you, and that app's own
+  menu opens, untouched
+- Live CPU / memory / disk / network at the bottom (**no permissions needed**)
+- Optionally fold a chosen group of icons away (⌘-drag the boundary marker to pick the group)
+
+**Off by default.** Enable from LidAwake → "菜单栏折叠". Listing and clicking icons needs
+**Accessibility** (the same permission Raycast / Rectangle ask for); folding and the system
+stats need **no permission at all**.
+
+Details, permission boundaries, and why another app's icon *image* is simply not obtainable:
+[docs/MENUBAR.md](docs/MENUBAR.md) (Chinese).
 
 ## ⚠️ Important caveats — please read
 

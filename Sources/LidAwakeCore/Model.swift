@@ -1,7 +1,7 @@
 import Foundation
 
 public enum LidAwakeInfo {
-    public static let version = "1.0.1"
+    public static let version = "1.1.0"
     public static let bundleID = "com.cogito.LidAwake"
     public static let machServiceName = "com.cogito.lidawaked"
     public static let daemonLabel = "com.cogito.lidawaked"
