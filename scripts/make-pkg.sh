@@ -96,11 +96,28 @@ exit 0
 SH
 chmod 755 "$SCRIPTS/preinstall" "$SCRIPTS/postinstall"
 
+echo "==> 生成 component plist（关闭 bundle 重定位）"
+# 为什么必须关掉 BundleIsRelocatable：
+# pkgbuild 默认把 app bundle 标记为"可重定位"，安装时 PackageKit 会通过
+# Launch Services 找到系统里**同 bundle id 的其它副本**，然后去动那一份而不是
+# /Applications。只要用户在 ~/Downloads、~/Documents 等位置留过一份 LidAwake.app，
+# 安装就会失败：
+#     PackageKit: Failed to unlinkat file reference /Users/.../build/LidAwake.app/...
+#     error: Operation not permitted        ← TCC 保护目录，installd 无权限
+#     installer: The upgrade failed. (将文件移到最终目的位置时发生意外错误。)
+# 实测踩到过，且回滚后 /Applications 下的 app 会被删掉而新的装不上。
+COMPONENT="$ROOT/build/component.plist"
+pkgbuild --analyze --root "$PKGROOT" "$COMPONENT" >/dev/null
+/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$COMPONENT" 2>/dev/null \
+    || plutil -replace 0.BundleIsRelocatable -bool false "$COMPONENT"
+echo "    BundleIsRelocatable = $(/usr/libexec/PlistBuddy -c 'Print :0:BundleIsRelocatable' "$COMPONENT" 2>/dev/null)"
+
 echo "==> pkgbuild"
 # 清掉扩展属性（quarantine / provenance），否则会以 AppleDouble(._*) 形式混进 payload
 xattr -cr "$PKGROOT"
 rm -f "$OUT"
 pkgbuild --root "$PKGROOT" \
+         --component-plist "$COMPONENT" \
          --scripts "$SCRIPTS" \
          --identifier "$IDENTIFIER" \
          --version "$VERSION" \
@@ -117,6 +134,10 @@ else
     echo "==> 未找到 Developer ID Installer 证书，产出**未签名**安装包"
     echo "    首次打开需要右键 →「打开」，或用命令行安装（见 README「安装」一节）"
 fi
+
+# 打包暂存目录里有一份同 bundle id 的 app，留着会被 Launch Services 索引到，
+# 反过来干扰下一次安装。打完包就清掉。
+rm -rf "$PKGROOT" "$SCRIPTS"
 
 echo ""
 echo "安装包: $OUT  ($(du -h "$OUT" | cut -f1))"

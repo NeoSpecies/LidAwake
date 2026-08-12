@@ -122,6 +122,46 @@ spctl -a -vvv -t install build/LidAwake-1.0.0.pkg   # 应输出 accepted / Notar
 
 ---
 
+## 打包时踩过的两个坑（记录在案）
+
+### 1. bundle 重定位会让安装失败
+
+`pkgbuild` **默认把 app bundle 标记为可重定位**（`BundleIsRelocatable = true`）。
+安装时 PackageKit 会通过 Launch Services 找到系统里**同 bundle id 的其它副本**，
+然后去动那一份，而不是老老实实装到 `/Applications`。
+
+实测后果：本机构建目录 `~/Documents/DEV/.../build/LidAwake.app` 存在一份副本，
+安装直接失败并回滚 ——
+
+```
+PackageKit: Failed to unlinkat file reference
+  /Users/.../build/LidAwake.app/Contents/Info.plist
+  error: Operation not permitted          ← ~/Documents 是 TCC 保护目录，installd 无权限
+PackageKit: Parent bundle com.cogito.LidAwake will be atomically shoved.
+installer: The upgrade failed. (将文件移到最终目的位置时发生意外错误。)
+```
+
+更糟的是失败发生在删除旧版之后 —— `/Applications` 下的 app 已经没了，新的又装不上。
+
+**任何用户只要在 `~/Downloads` 之类的地方留过一份 LidAwake.app 就会踩到。**
+
+修法：生成 component plist 并关掉重定位，`scripts/make-pkg.sh` 已内置：
+
+```bash
+pkgbuild --analyze --root "$PKGROOT" component.plist
+/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" component.plist
+pkgbuild --component-plist component.plist ... 
+```
+
+验证：`pkgutil --expand` 后 `PackageInfo` 里应有 `relocatable="false"`。
+
+### 2. 打包暂存目录会自己给自己制造第二份副本
+
+`build/pkgroot/Applications/LidAwake.app` 也会被 Launch Services 索引到，
+于是打完包不清理的话，下次安装又会命中同一个坑。`make-pkg.sh` 结束时会 `rm -rf` 掉它。
+
+---
+
 ## 路线 C：现状（GitHub Releases 的未签名 `.pkg`）
 
 现在 `scripts/make-pkg.sh` 产出的就是这个。功能完整，代价是 Gatekeeper 摩擦：
