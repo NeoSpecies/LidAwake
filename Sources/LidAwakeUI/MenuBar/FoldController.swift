@@ -37,16 +37,12 @@ final class FoldController {
             ?? .expanded
 
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.isHidden = true
         // 弹性左边距 = 钉右边缘。用 springs-and-struts 而不是 Auto Layout：
         // 状态栏按钮的尺寸由系统改，约束链在这里更容易出意外。
         iconView.autoresizingMask = [.minXMargin]
-        if let button = statusItem.button {
-            iconView.frame = NSRect(x: button.bounds.width - iconSize - iconInset,
-                                    y: (button.bounds.height - iconSize) / 2,
-                                    width: iconSize, height: iconSize)
-            button.addSubview(iconView)
-        }
+        // 注意：**只在折叠态才把它挂到按钮上**。
+        // 展开态用的是 variableLength（按内容自适应宽度），多挂一个子视图
+        // 可能影响宽度计算，让图标和邻居之间出现一条空隙。
         apply()
     }
 
@@ -67,12 +63,13 @@ final class FoldController {
             // 折叠态：自己变得极宽把左边图标顶出去；只显示钉在右边缘的图标
             button.image = nil
             button.title = ""
-            iconView.isHidden = false
+            if iconView.superview == nil { button.addSubview(iconView) }
             // 必须夹在 10000 以内：超了 NSStatusItem 会抛异常直接崩溃
             statusItem.length = MenuBarLayout.foldedLength(iconSize: iconSize, inset: iconInset)
             DispatchQueue.main.async { [weak self] in self?.pinIconToTrailingEdge() }
         case .expanded:
-            iconView.isHidden = true
+            // 摘掉子视图，让按钮回到"纯 image + title"的自适应宽度
+            iconView.removeFromSuperview()
             statusItem.length = NSStatusItem.variableLength
             onRestoreNormalAppearance?()
         }

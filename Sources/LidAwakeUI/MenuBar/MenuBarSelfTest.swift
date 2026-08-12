@@ -44,6 +44,16 @@ enum MenuBarSelfTest {
         emit("  真实图标预览开关: \(IconCapture.isRequested ? "已勾选" : "关闭")")
 
         emit("\n── 折叠机制（无需任何权限，复用同一个状态栏图标）")
+        // 自检会切换折叠状态，而状态是落盘的 —— 必须先备份后还原，
+        // 否则自检中途崩溃就会把用户的菜单栏留在折叠态（实测踩过）。
+        let savedFoldState = UserDefaults.standard.string(forKey: "menubar.foldState")
+        defer {
+            if let savedFoldState {
+                UserDefaults.standard.set(savedFoldState, forKey: "menubar.foldState")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "menubar.foldState")
+            }
+        }
         let probeItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let fold = FoldController(statusItem: probeItem)
         emit("  初始状态: \(fold.state.rawValue)")
@@ -53,6 +63,14 @@ enum MenuBarSelfTest {
         emit("  切到 expanded → 状态 \(fold.state.rawValue)  宽度 \(Int(probeItem.length))"
              + "（-1 = variableLength）")
         emit("  状态栏图标占用: 1 个（折叠复用同一项，不额外占格子）")
+        let normalItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        normalItem.button?.image = Symbols.image(["powersleep"], description: "")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        if let w = normalItem.button?.window?.frame.width {
+            emit(String(format: "  展开态实测宽度: %.0f pt %@", w,
+                        w > 60 ? "← 偏宽，可能和邻居之间有空隙" : "（正常，紧挨邻居）"))
+        }
+        NSStatusBar.system.removeStatusItem(normalItem)
         emit("  说明: 图标被顶出屏幕的视觉效果需人眼确认，程序无法自证")
         NSStatusBar.system.removeStatusItem(probeItem)
 
