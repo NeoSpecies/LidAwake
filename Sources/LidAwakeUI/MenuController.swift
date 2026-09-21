@@ -66,6 +66,21 @@ final class MenuController: NSObject, NSMenuDelegate {
 
         refresh()
         applyStateToUI()
+        // 把自己这一项的实际位置写到缓存，方便排查"图标和邻居之间有空隙"这类问题。
+        // 状态栏布局由系统决定，程序里量不到邻居，只能量自己再和系统项对比。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.dumpItemGeometry()
+        }
+    }
+
+    private func dumpItemGeometry() {
+        guard let win = statusItem.button?.window else { return }
+        let f = win.frame
+        let text = String(format: "statusItem  x=%.1f  y=%.1f  w=%.1f  h=%.1f  length=%.1f  fold=%@\n",
+                          f.minX, f.minY, f.width, f.height,
+                          statusItem.length, foldFeature.foldState.rawValue as NSString)
+        let path = NSHomeDirectory() + "/Library/Caches/LidAwake-item.txt"
+        try? text.write(toFile: path, atomically: true, encoding: .utf8)
     }
 
     /// 左键 → 面板（默认动作，装这个 App 最常用的就是它）
